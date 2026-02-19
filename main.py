@@ -4,7 +4,8 @@ import re
 from io import BytesIO
 from datetime import datetime, timedelta
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font, Border, Side
+from openpyxl.styles import Alignment, Font
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -46,7 +47,7 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES ---
 def get_monday_dates():
     hoy = datetime.now()
     lunes_actual = hoy - timedelta(days=hoy.weekday())
@@ -77,7 +78,7 @@ with st.sidebar:
     st.write("---")
     menu_opcion = st.radio("Módulos:", ["📋 Censo Diario", "📦 Censo de Insumos"], index=0)
     st.write("---")
-    st.caption(f"Carlos | Residente de Epidemiología\nCMN 20 de Noviembre")
+    st.caption("CMN 20 de Noviembre")
 
 # --- CARGA GLOBAL ---
 st.header(menu_opcion)
@@ -88,7 +89,6 @@ if archivo:
         tablas = pd.read_html(archivo)
         df_completo = max(tablas, key=len)
         col0_str = df_completo.iloc[:, 0].fillna("").astype(str).str.upper()
-        
         pacs_detectados = []
         especialidades_encontradas = set()
         IGNORAR = ["PACIENTES", "TOTAL", "SUBTOTAL", "PÁGINA", "IMPRESIÓN", "1111"]
@@ -172,7 +172,6 @@ if archivo:
             if not pacs_insumos:
                 st.warning("⚠️ No se detectaron pacientes en los servicios críticos para insumos.")
             else:
-                st.subheader(f"Vista Previa de Datos ({len(pacs_insumos)} pacientes)")
                 for serv in servicios_en_insumos:
                     with st.expander(f"🔍 Previsualización: {serv}", expanded=False):
                         df_preview = pd.DataFrame([p for p in pacs_insumos if p["esp_real"] == serv])
@@ -195,42 +194,35 @@ if archivo:
                             
                             sheet_name = serv[:30].replace("/", "-")
                             df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
-                            
                             ws = writer.sheets[sheet_name]
                             
-                            # 1. ENCABEZADO SUPERIOR (Fila 1)
+                            # TÍTULO SUPERIOR
                             header_text = f"{serv} VIGENCIA DEL {lunes_ini} AL {lunes_fin} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
                             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cols_finales))
                             cell_h = ws.cell(row=1, column=1, value=header_text)
                             cell_h.alignment = Alignment(horizontal="center", vertical="center")
                             cell_h.font = Font(bold=True, size=11)
 
-                            # 2. ESTILO DE DATOS Y AUTOAJUSTE
-                            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(cols_finales)):
-                                for cell in row:
-                                    cell.alignment = Alignment(horizontal="center", vertical="center")
-                            
-                            # 3. PIES DE PÁGINA (Seguidos sin saltos)
+                            # PIES DE PÁGINA
                             last_data_row = ws.max_row
-                            # NOM-045 (Fila inmediata)
                             ws.merge_cells(start_row=last_data_row + 1, start_column=1, end_row=last_data_row + 1, end_column=len(cols_finales))
                             cell_f1 = ws.cell(row=last_data_row + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
                             cell_f1.alignment = Alignment(horizontal="center", vertical="center")
                             cell_f1.font = Font(size=9, italic=True)
-
-                            # Autorizó (Fila inmediata)
                             ws.cell(row=last_data_row + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS")
                             ws.cell(row=last_data_row + 2, column=1).font = Font(bold=True)
                             
-                            # 4. AUTO-AJUSTE DE COLUMNAS
+                            # AUTO-AJUSTE Y CENTRADO ESTRICTO
                             for i, col_name in enumerate(cols_finales):
                                 column_letter = get_column_letter(i + 1)
                                 max_length = len(col_name)
-                                for row in ws.iter_rows(min_col=i+1, max_col=i+1):
+                                # Solo revisamos desde la fila 2 para ignorar el encabezado combinado de la fila 1
+                                for row in ws.iter_rows(min_row=2, max_row=last_data_row, min_col=i+1, max_col=i+1):
                                     for cell in row:
+                                        cell.alignment = Alignment(horizontal="center", vertical="center")
                                         if cell.value:
                                             max_length = max(max_length, len(str(cell.value)))
-                                ws.column_dimensions[column_letter].width = max_length + 5
+                                ws.column_dimensions[column_letter].width = max_length + 3
 
                     st.success("✅ Censo de Insumos generado.")
                     st.download_button("💾 DESCARGAR REPORTE", data=output.getvalue(), file_name=f"Insumos_{datetime.now().strftime('%d%m%Y')}.xlsx", use_container_width=True)
