@@ -1,0 +1,1 @@
+# epidemio-manager
