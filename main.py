@@ -12,12 +12,13 @@ st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="w
 
 # --- REGLAS DE NEGOCIO ---
 SERVICIOS_INSUMOS_FILTRO = [
-    "ONCOLOGÍA PEDIATRICA", "NEONATOLOGIA", "INFECTOTOLOGIA PEDIATRICA", 
-    "U.C.I.N.", "U.T.I.P.", "TERAPIA POSQUIRURGICA", 
-    "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
+    "ONCOLOGÍA PEDIATRICA", "ONCOLOGIA PEDIATRICA", "NEONATOLOGIA", 
+    "INFECTOTOLOGIA PEDIATRICA", "U.C.I.N.", "U.T.I.P.", 
+    "TERAPIA POSQUIRURGICA", "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", 
+    "UCIA", "HEMATOLOGIA ADULTOS", "HEMATOLOGIA PEDIATRICA"
 ]
 
-ORDEN_TERAPIAS_EXCEL = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
+ORDEN_TERAPIAS_STRICTO = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
 
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
@@ -118,7 +119,6 @@ if archivo:
                 found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
                 if found: buckets[cat] = found; asignadas.update(found)
             
-            # REPARACIÓN: OTRAS ESPECIALIDADES
             otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
             if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
@@ -131,8 +131,8 @@ if archivo:
                         st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
                         for s in servicios: st.checkbox(s, key=f"serv_{cat_name}_{s}")
 
+            # Botón de Generar General (mantenido)
             if st.button("🚀 GENERAR EXCEL GENERAL", use_container_width=True, type="primary"):
-                # (Misma lógica de exportación general...)
                 pass
 
         # --- MÓDULO 2: CENSO DE INSUMOS ---
@@ -141,7 +141,7 @@ if archivo:
             servicios_insumos = sorted(list(set([p["esp_real"] for p in pacs_insumos])))
 
             if not pacs_insumos:
-                st.warning("⚠️ No hay pacientes en servicios críticos.")
+                st.warning("⚠️ No se detectaron pacientes en los servicios críticos de insumos.")
             else:
                 for serv in servicios_insumos:
                     with st.expander(f"🔍 Previsualización: {serv}"):
@@ -151,7 +151,7 @@ if archivo:
                         st.table(df_p[["CAMA", "REG", "PAC", "S", "E", "I", "TIPO DE PRECAUCIONES", "INSUMO"]])
 
                 if st.button("🚀 GENERAR EXCEL DE INSUMOS", use_container_width=True, type="primary"):
-                    f_ini, f_venc = get_report_dates() # AHORA SÍ: HOY Y HOY+7
+                    f_ini, f_venc = get_report_dates()
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         for serv in servicios_insumos:
@@ -166,19 +166,19 @@ if archivo:
                             df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                             ws = writer.sheets[sheet_name]
                             
-                            # TÍTULO SUPERIOR (FECHAS CORREGIDAS)
+                            # TÍTULO SUPERIOR
                             header = f"{serv} DEL {f_ini} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
                             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
                             ws.cell(row=1, column=1, value=header).alignment = Alignment(horizontal="center", vertical="center")
-                            ws.cell(row=1, column=1).font = Font(bold=True, size=11)
+                            ws.cell(row=1, column=1).font = Font(bold=True)
 
-                            # PIE DE PÁGINA (NOM-045 Y FIRMA SIN SALTOS)
+                            # PIE DE PÁGINA (NOM-045 AJUSTADA)
                             lr = ws.max_row
                             ws.merge_cells(start_row=lr + 1, start_column=1, end_row=lr + 1, end_column=8)
                             cell_f = ws.cell(row=lr + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
                             cell_f.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                             cell_f.font = Font(size=9, italic=True)
-                            ws.row_dimensions[lr + 1].height = 50 # Altura para que el texto NO se corte
+                            ws.row_dimensions[lr + 1].height = 50 
 
                             ws.cell(row=lr + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS").font = Font(bold=True)
                             
