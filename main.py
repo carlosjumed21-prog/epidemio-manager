@@ -48,11 +48,11 @@ CATALOGO = {
 }
 
 # --- FUNCIONES ---
-def get_monday_dates():
+def get_report_dates():
+    """Retorna la fecha de hoy y la fecha de vencimiento (7 días después)"""
     hoy = datetime.now()
-    lunes_actual = hoy - timedelta(days=hoy.weekday())
-    lunes_siguiente = lunes_actual + timedelta(days=7)
-    return lunes_actual.strftime("%d/%m/%Y"), lunes_siguiente.strftime("%d/%m/%Y")
+    vencimiento = hoy + timedelta(days=7)
+    return hoy.strftime("%d/%m/%y"), vencimiento.strftime("%d/%m/%y")
 
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
@@ -180,7 +180,7 @@ if archivo:
                         st.table(df_preview[["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]])
 
                 if st.button("🚀 GENERAR EXCEL DE INSUMOS (NOM-045)", use_container_width=True, type="primary"):
-                    lunes_ini, lunes_fin = get_monday_dates()
+                    fecha_hoy_str, fecha_venc_str = get_report_dates()
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         for serv in servicios_en_insumos:
@@ -196,19 +196,23 @@ if archivo:
                             df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                             ws = writer.sheets[sheet_name]
                             
-                            # TÍTULO SUPERIOR
-                            header_text = f"{serv} VIGENCIA DEL {lunes_ini} AL {lunes_fin} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
+                            # TÍTULO SUPERIOR (CORRECCIÓN DE FECHAS)
+                            header_text = f"{serv} DEL {fecha_hoy_str} AL {fecha_venc_str} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
                             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cols_finales))
                             cell_h = ws.cell(row=1, column=1, value=header_text)
                             cell_h.alignment = Alignment(horizontal="center", vertical="center")
                             cell_h.font = Font(bold=True, size=11)
 
-                            # PIES DE PÁGINA
+                            # PIES DE PÁGINA (SIN SALTOS Y CON AJUSTE DE TEXTO)
                             last_data_row = ws.max_row
                             ws.merge_cells(start_row=last_data_row + 1, start_column=1, end_row=last_data_row + 1, end_column=len(cols_finales))
                             cell_f1 = ws.cell(row=last_data_row + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
-                            cell_f1.alignment = Alignment(horizontal="center", vertical="center")
+                            
+                            # Corrección de ajuste automático de texto y altura para la leyenda
+                            cell_f1.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                             cell_f1.font = Font(size=9, italic=True)
+                            ws.row_dimensions[last_data_row + 1].height = 45 # Asegura que el texto se vea completo
+
                             ws.cell(row=last_data_row + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS")
                             ws.cell(row=last_data_row + 2, column=1).font = Font(bold=True)
                             
@@ -216,16 +220,17 @@ if archivo:
                             for i, col_name in enumerate(cols_finales):
                                 column_letter = get_column_letter(i + 1)
                                 max_length = len(col_name)
-                                # Solo revisamos desde la fila 2 para ignorar el encabezado combinado de la fila 1
                                 for row in ws.iter_rows(min_row=2, max_row=last_data_row, min_col=i+1, max_col=i+1):
                                     for cell in row:
                                         cell.alignment = Alignment(horizontal="center", vertical="center")
                                         if cell.value:
                                             max_length = max(max_length, len(str(cell.value)))
+                                
+                                # Ajuste especial para columna CAMA ignorando el título combinado
                                 ws.column_dimensions[column_letter].width = max_length + 3
 
                     st.success("✅ Censo de Insumos generado.")
-                    st.download_button("💾 DESCARGAR REPORTE", data=output.getvalue(), file_name=f"Insumos_{datetime.now().strftime('%d%m%Y')}.xlsx", use_container_width=True)
+                    st.download_button(label="💾 DESCARGAR REPORTE", data=output.getvalue(), file_name=f"Insumos_{datetime.now().strftime('%d%m%y')}.xlsx", use_container_width=True)
 
     except Exception as e:
         st.error(f"Error: {e}")
