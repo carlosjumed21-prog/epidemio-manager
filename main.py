@@ -5,20 +5,14 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
 # --- REGLAS DE NEGOCIO ---
-# Filtro completo solicitado para Insumos
-SERVICIOS_INSUMOS_FILTRO = [
-    "HEMATOLOGÍA", "HEMATOLOGÍA PEDIÁTRICA", "ONCOLOGÍA PEDIATRICA",
-    "NEONATOLOGIA", "INFECTOLOGIA PEDIATRICA", "U.C.I.N.", "U.T.I.P.",
-    "TERAPIA POSQUIRURGICA", "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
-]
-
-ORDEN_TERAPIAS_EXCEL = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
+ORDEN_TERAPIAS_STRICTO = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
 
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
@@ -47,9 +41,14 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
+SERVICIOS_INSUMOS_FILTRO = [
+    "HEMATOLOGIA", "HEMATOLOGÍA PEDIÁTRICA", "ONCOLOGÍA PEDIATRICA",
+    "NEONATOLOGIA", "INFECTOLOGIA PEDIATRICA", "U.C.I.N.", "U.T.I.P.",
+    "TERAPIA POSQUIRURGICA", "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
+]
+
 # --- FUNCIONES ---
 def get_report_dates():
-    """Fecha 1 = Hoy, Fecha 2 = Hoy + 7 días"""
     hoy = datetime.now()
     vencimiento = hoy + timedelta(days=7)
     return hoy.strftime("%d/%m/%y"), vencimiento.strftime("%d/%m/%y")
@@ -118,7 +117,6 @@ if archivo:
                 found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
                 if found: buckets[cat] = found; asignadas.update(found)
             
-            # REPARACIÓN: OTRAS ESPECIALIDADES
             otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
             if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
@@ -130,6 +128,42 @@ if archivo:
                     with st.container(border=True):
                         st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
                         for s in servicios: st.checkbox(s, key=f"serv_{cat_name}_{s}")
+
+            # RESTAURADO: BOTÓN GENERAR EXCEL GENERAL
+            if st.button("🚀 GENERAR EXCEL GENERAL", use_container_width=True, type="primary"):
+                especialidades_finales = set()
+                for c_name, servs in buckets.items():
+                    if st.session_state.get(f"master_{c_name}"):
+                        if c_name in VINCULO_AUTO_INCLUSION:
+                            for t in VINCULO_AUTO_INCLUSION[c_name]:
+                                if t in especialidades_encontradas: especialidades_finales.add(t)
+                    for s in servs:
+                        if st.session_state.get(f"serv_{c_name}_{s}"): especialidades_finales.add(s)
+
+                if especialidades_finales:
+                    datos_excel = []
+                    for p in pacs_detectados:
+                        if p["esp_real"] in especialidades_finales:
+                            datos_excel.append({"FECHA_REPORTE": datetime.now().strftime("%d/%m/%Y"), "ESPECIALIDAD": p["esp_real"], "CAMA": p["CAMA"], "REGISTRO": p["REG"], "PACIENTE": p["PAC"], "SEXO": p["S"], "EDAD": p["E"], "DIAGNOSTICO": p["D"], "FECHA_INGRESO": p["I"]})
+
+                    df_out = pd.DataFrame(datos_excel)
+                    otros_servs = sorted([s for s in list(especialidades_finales) if s not in ORDEN_TERAPIAS_STRICTO])
+                    mapeo_orden = ORDEN_TERAPIAS_STRICTO + otros_servs
+                    df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden, ordered=True)
+                    df_out = df_out.sort_values(['ESPECIALIDAD', 'CAMA'])
+
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_out.to_excel(writer, index=False, sheet_name='Censo')
+                    
+                    output.seek(0)
+                    wb = load_workbook(output)
+                    ws = wb.active
+                    ws.add_table(Table(displayName="CensoGral", ref=ws.dimensions, tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
+                    for col in ws.columns:
+                        ws.column_dimensions[get_column_letter(col[0].column)].width = 25
+                    
+                    st.download_button(label="💾 DESCARGAR EXCEL GENERAL", data=output.getvalue(), file_name=f"Censo_Gral_{datetime.now().strftime('%d%m%Y')}.xlsx", use_container_width=True)
 
         # --- MÓDULO 2: CENSO DE INSUMOS ---
         elif menu_opcion == "📦 Censo de Insumos":
@@ -161,32 +195,31 @@ if archivo:
                             df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                             ws = writer.sheets[sheet_name]
                             
-                            # TÍTULO SUPERIOR (FECHAS CORREGIDAS)
+                            # TÍTULO (FECHAS CORREGIDAS)
+                            header = f"{serv} DEL {f_hoy} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
                             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
-                            cell_h = ws.cell(row=1, column=1, value=f"{serv} DEL {f_hoy} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)")
+                            cell_h = ws.cell(row=1, column=1, value=header)
                             cell_h.alignment = Alignment(horizontal="center", vertical="center"); cell_h.font = Font(bold=True)
 
-                            # PIE DE PÁGINA (NOM-045 AJUSTADA)
+                            # PIE DE PÁGINA (NOM-045)
                             lr = ws.max_row
                             ws.merge_cells(start_row=lr + 1, start_column=1, end_row=lr + 1, end_column=8)
                             cell_f = ws.cell(row=lr + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
                             cell_f.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                             cell_f.font = Font(size=9, italic=True)
                             ws.row_dimensions[lr + 1].height = 55 
-
                             ws.cell(row=lr + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS").font = Font(bold=True)
                             
-                            # AUTO-AJUSTE DE COLUMNAS (IGNORANDO CABECERA)
+                            # AUTO-AJUSTE
                             for i, col_name in enumerate(df_final.columns):
-                                column_letter = get_column_letter(i + 1)
+                                L = get_column_letter(i + 1)
                                 m_len = len(col_name)
                                 for r in ws.iter_rows(min_row=2, max_row=lr, min_col=i+1, max_col=i+1):
                                     for c in r:
                                         c.alignment = Alignment(horizontal="center")
                                         if c.value: m_len = max(m_len, len(str(c.value)))
-                                ws.column_dimensions[column_letter].width = m_len + 4
+                                ws.column_dimensions[L].width = m_len + 4
 
-                    st.download_button(label="💾 DESCARGAR", data=output.getvalue(), file_name=f"Insumos_{f_hoy.replace('/','-')}.xlsx", use_container_width=True)
+                    st.download_button(label="💾 DESCARGAR INSUMOS", data=output.getvalue(), file_name=f"Insumos_{f_hoy.replace('/','-')}.xlsx", use_container_width=True)
     except Exception as e:
         st.error(f"Error: {e}")
-        
