@@ -7,11 +7,11 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
 # --- REGLAS DE NEGOCIO ESTRICTAS ---
-ORDEN_TERAPIAS_STRICTO = [
+ORDEN_TERAPIAS_EXCEL = [
     "UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", 
     "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"
 ]
@@ -22,14 +22,15 @@ MAPA_TERAPIAS = {
     "UNIDAD DE QUEMADOS": "COORD_CIRUGIA", "UCIA": "COORD_MEDICINA"
 }
 
-VINCULO_COORD_TERAPIA = {
+# Regla de auto-inclusión solo para el Excel si se marca "Todo"
+VINCULO_AUTO_INCLUSION = {
     "COORD_MEDICINA": ["UCIA", "TERAPIA POSQUIRURGICA"],
     "COORD_CIRUGIA": ["UNIDAD DE QUEMADOS"],
     "COORD_MODULARES": ["UNIDAD CORONARIA"],
     "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
 
-# CATALOGO CORREGIDO: Se eliminó "MEDICINA INTERNA PEDIATRICA" de COORD_MEDICINA
+# CATALOGO SIN MEDICINA INTERNA PEDIATRICA EN MEDICINA
 CATALOGO = {
     "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "PSIQ", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
@@ -38,17 +39,7 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
-def clasificar_especialidad(nombre_esp):
-    n = nombre_esp.upper()
-    # 1. Prioridad 1: Terapias
-    if n in MAPA_TERAPIAS: return "COORD_TERAPIAS"
-    # 2. Prioridad 2: Filtro Pediátrico Estricto (Antes que Medicina Interna)
-    if "PEDIATRICA" in n or "PEDIATRI" in n: return "COORD_PEDIATRIA"
-    # 3. Resto de coordinaciones
-    for c, kws in CATALOGO.items():
-        if any(kw in n for kw in kws): return c
-    return "OTRAS_ESPECIALIDADES"
-
+# --- FUNCIONES DE LÓGICA ---
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -58,9 +49,7 @@ def obtener_especialidad_real(cama, esp_html):
     if c.startswith("56"): return "U.T.I.P."
     if c.startswith("85"): return "UNIDAD DE QUEMADOS"
     if c.startswith("73"): return "UCIA"
-    if c.isdigit():
-        val = int(c)
-        if 7401 <= val <= 7409: return "TERAPIA POSQUIRURGICA"
+    if c.isdigit() and 7401 <= int(c) <= 7409: return "TERAPIA POSQUIRURGICA"
     return esp_html_clean
 
 def sync_group(cat_name, servicios):
@@ -69,9 +58,7 @@ def sync_group(cat_name, servicios):
         st.session_state[f"serv_{cat_name}_{s}"] = master_val
 
 # --- INTERFAZ ---
-st.title("🏥 EpidemioManager - ISSSTE")
-st.caption("Residencia de Epidemiología - CMN 20 de Noviembre")
-
+st.title("🏥 EpidemioManager - CMN 20 de Noviembre")
 archivo = st.file_uploader("Subir Censo HTML", type=["html", "htm"])
 
 if archivo:
@@ -100,15 +87,37 @@ if archivo:
                     "ING": fila[9], "esp_real": esp_real
                 })
 
-        st.write("---")
         st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
 
-        # --- SELECCIÓN ---
-        buckets = {"⚠️ UNIDADES DE TERAPIA ⚠️": [e for e in especialidades_encontradas if e in MAPA_TERAPIAS]}
-        for cat, items in CATALOGO.items():
-            found = [e for e in especialidades_encontradas if any(kw in e for kw in items) and e not in MAPA_TERAPIAS]
-            if found: buckets[cat] = found
+        # --- CONSTRUCCIÓN DE BUCKETS EXCLUYENTES ---
+        buckets = {}
+        asignadas = set()
 
+        # 1. Bucket Terapias (Prioridad Visual)
+        terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
+        if terapias_list:
+            buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
+            asignadas.update(terapias_list)
+
+        # 2. Bucket Pediatría (Prioridad para atrapar Medicina Interna Pediátrica)
+        ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and ("PEDIATRI" in e or "PEDIATRICA" in e)])
+        if ped_list:
+            buckets["COORD_PEDIATRIA"] = ped_list
+            asignadas.update(ped_list)
+
+        # 3. Resto de Coordinaciones
+        for cat, kws in CATALOGO.items():
+            if cat == "COORD_PEDIATRIA": continue
+            found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
+            if found:
+                buckets[cat] = found
+                asignadas.update(found)
+
+        # 4. Otras
+        otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
+        if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
+
+        # --- RENDERIZADO DE CHECKBOXES ---
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             with cols[idx % 3]:
@@ -121,49 +130,43 @@ if archivo:
 
         st.write("---")
 
+        # --- PROCESAMIENTO EXCEL ---
         if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
-            especialidades_a_incluir = set()
+            especialidades_finales = set()
             for c_name, servs in buckets.items():
-                master_val = st.session_state.get(f"master_{c_name}")
-                if master_val and c_name in VINCULO_COORD_TERAPIA:
-                    for t in VINCULO_COORD_TERAPIA[c_name]:
-                        if t in especialidades_encontradas:
-                            especialidades_a_incluir.add(t)
+                master_marcado = st.session_state.get(f"master_{c_name}")
+                
+                # AUTO-INCLUSIÓN: Si marcó "Todo" en la coord, incluimos sus terapias en el EXCEL
+                if master_marcado and c_name in VINCULO_AUTO_INCLUSION:
+                    for t_vinculada in VINCULO_AUTO_INCLUSION[c_name]:
+                        if t_vinculada in especialidades_encontradas:
+                            especialidades_finales.add(t_vinculada)
+                
+                # Selección normal
                 for s in servs:
                     if st.session_state.get(f"serv_{c_name}_{s}"):
-                        especialidades_a_incluir.add(s)
+                        especialidades_finales.add(s)
 
-            if not especialidades_a_incluir:
+            if not especialidades_finales:
                 st.warning("⚠️ Selecciona un servicio.")
             else:
                 fecha_hoy = datetime.now()
                 datos_excel = []
                 for p in pacs_detectados:
-                    if p["esp_real"] in especialidades_a_incluir:
+                    if p["esp_real"] in especialidades_finales:
                         try:
                             f_ing = datetime.strptime(p["ING"], "%d/%m/%Y")
-                            dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - 
-                                    datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
+                            dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
                         except: dias = "Rev."
-
-                        datos_excel.append({
-                            "FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"),
-                            "ESPECIALIDAD": p["esp_real"],
-                            "CAMA": p["CAMA"], "REGISTRO": p["REG"],
-                            "PACIENTE": p["PAC"], "SEXO": p["SEXO"],
-                            "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAG"],
-                            "FECHA_INGRESO": p["ING"], "DIAS_ESTANCIA": dias
-                        })
+                        datos_excel.append({"FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"), "ESPECIALIDAD": p["esp_real"], "CAMA": p["CAMA"], "REGISTRO": p["REG"], "PACIENTE": p["PAC"], "SEXO": p["SEXO"], "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAG"], "FECHA_INGRESO": p["ING"], "DIAS_ESTANCIA": dias})
 
                 if datos_excel:
                     df_out = pd.DataFrame(datos_excel)
                     
-                    # Ordenamiento Estricto
-                    lista_final = list(especialidades_a_incluir)
-                    otros = sorted([s for s in lista_final if s not in ORDEN_TERAPIAS_STRICTO])
-                    mapeo = ORDEN_TERAPIAS_STRICTO + otros
-                    
-                    df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo, ordered=True)
+                    # --- ORDENAMIENTO ESTRICTO DE TERAPIAS ---
+                    otros_servs = sorted([s for s in list(especialidades_finales) if s not in ORDEN_TERAPIAS_EXCEL])
+                    mapeo_orden = ORDEN_TERAPIAS_EXCEL + otros_servs
+                    df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden, ordered=True)
                     df_out = df_out.sort_values(['ESPECIALIDAD', 'CAMA'])
 
                     output = BytesIO()
@@ -173,18 +176,14 @@ if archivo:
                     output.seek(0)
                     wb = load_workbook(output)
                     ws = wb.active
-                    ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, 
-                                       tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
+                    ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
                     for col in ws.columns:
                         ws.column_dimensions[get_column_letter(col[0].column)].width = 25
-
+                    
                     final_io = BytesIO()
                     wb.save(final_io)
-                    
-                    st.success(f"✅ Excel generado.")
-                    st.download_button(label="💾 DESCARGAR EXCEL", data=final_io.getvalue(), 
-                                       file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx",
-                                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                       use_container_width=True)
+                    st.success(f"✅ Reporte generado.")
+                    st.download_button(label="💾 DESCARGAR EXCEL", data=final_io.getvalue(), file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
     except Exception as e:
         st.error(f"Error: {e}")
