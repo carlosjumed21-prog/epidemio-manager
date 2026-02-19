@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# --- LÓGICA DE NEGOCIO (REGLAS DE CARLOS) ---
+# --- LÓGICA DE NEGOCIO ---
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
     "U.T.I.P.": "COORD_PEDIATRIA", "TERAPIA POSQUIRURGICA": "COORD_MEDICINA",
@@ -71,7 +71,6 @@ if archivo:
             
             fila = [str(x).strip() for x in df_completo.iloc[i].values]
             cama, registro = fila[0], fila[1]
-            
             if any(x in cama for x in IGNORAR): continue
             
             if len(registro) >= 5 and any(char.isdigit() for char in registro):
@@ -83,14 +82,10 @@ if archivo:
                     "DIAGNOSTICO": fila[6], "FECHA_INGRESO": fila[9], "esp_real": esp_real
                 })
 
-        # --- MÉTRICAS ---
-        # Se muestran con un formato de texto claro para evitar errores de color
         st.write("---")
         col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.subheader(f"📊 Pacientes: {len(pacs_detectados)}")
-        with col_m2:
-            st.subheader(f"🧪 Servicios: {len(especialidades_encontradas)}")
+        with col_m1: st.subheader(f"📊 Pacientes: {len(pacs_detectados)}")
+        with col_m2: st.subheader(f"🧪 Servicios: {len(especialidades_encontradas)}")
         st.write("---")
 
         # --- BUCKETS DE COORDINACIÓN ---
@@ -100,48 +95,50 @@ if archivo:
             buckets[cat].append(e)
 
         st.markdown("### 🛠️ Configuración del Reporte")
-        st.info("Marca la casilla de la coordinación para seleccionar todos sus servicios automáticamente.")
+        st.info("Marca la casilla 'Seleccionar todo' para incluir todos los servicios de esa coordinación.")
         
-        seleccion_usuario = []
+        # Usamos un set para evitar duplicados si el usuario marca la maestra y luego una individual
+        seleccion_set = set()
         
-        # Grid de 3 columnas para las coordinaciones
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             if not servicios: continue
             
             with cols[idx % 3]:
-                # Creamos un contenedor visual para cada coordinación
                 with st.container(border=True):
-                    nombre_limpio = cat_name.replace("COORD_", "")
+                    nombre_limpio = cat_name.replace("COORD_", "").replace("_", " ")
                     # CASILLA MAESTRA
                     todo = st.checkbox(f"Seleccionar todo {nombre_limpio}", key=f"master_{cat_name}")
                     
                     # CASILLAS HIJAS
                     for s in servicios:
-                        # El valor (value) de la hija está atado a la maestra (todo)
-                        if st.checkbox(s, value=todo, key=f"serv_{s}"):
-                            seleccion_usuario.append(s)
+                        # Si 'todo' está marcado, el valor por defecto es True
+                        seleccionado = st.checkbox(s, value=todo, key=f"serv_{s}")
+                        if seleccionado:
+                            seleccion_set.add(s)
+
+        # Convertimos el set a lista para procesar
+        seleccion_usuario = list(seleccion_set)
 
         st.write("---")
+        # Mostramos un contador de servicios seleccionados para dar seguridad al usuario
+        st.write(f"**Servicios listos para exportar:** {len(seleccion_usuario)}")
 
         # --- GENERAR EXCEL ---
-        if st.button("📥 Descargar Excel de Especialidades Seleccionadas", use_container_width=True, type="primary"):
+        if st.button("📥 Generar y Descargar Excel", use_container_width=True, type="primary"):
             if not seleccion_usuario:
-                st.warning("⚠️ Debes seleccionar al menos un servicio para generar el archivo.")
+                st.warning("⚠️ Debes seleccionar al menos un servicio arriba.")
             else:
                 fecha_hoy = datetime.now()
-                # Filtrar pacientes
                 datos_finales = []
                 for p in pacs_detectados:
                     if p["esp_real"] in seleccion_usuario:
-                        # Cálculo de estancia
                         try:
                             f_ing = datetime.strptime(p["FECHA_INGRESO"], "%d/%m/%Y")
                             dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - 
                                     datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
                         except: dias = "Revisar"
                         
-                        # Creamos la fila del Excel (quitando la columna temporal 'esp_real')
                         datos_finales.append({
                             "FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"),
                             "ESPECIALIDAD": p["esp_real"],
@@ -154,15 +151,13 @@ if archivo:
                 if datos_finales:
                     df_out = pd.DataFrame(datos_finales)
                     output = BytesIO()
-                    
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_out.to_excel(writer, index=False, sheet_name='Epidemiologia')
                     
-                    # Formato estético del Excel
                     output.seek(0)
                     wb = load_workbook(output)
                     ws = wb.active
-                    if not ws.dimensions == 'A1:A1': # Evitar error si está vacío
+                    if not ws.dimensions == 'A1:A1':
                         ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, 
                                            tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
                         for col in ws.columns:
@@ -171,15 +166,16 @@ if archivo:
                     final_io = BytesIO()
                     wb.save(final_io)
                     
-                    st.success(f"✅ Se han procesado {len(datos_finales)} pacientes correctamente.")
+                    st.success(f"✅ ¡Proceso completado! {len(datos_finales)} pacientes incluidos.")
                     st.download_button(
                         label="💾 Guardar Archivo Excel",
                         data=final_io.getvalue(),
                         file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
                     )
                 else:
-                    st.error("No se encontraron pacientes para la selección realizada.")
+                    st.error("No se encontraron datos para los servicios seleccionados.")
 
     except Exception as e:
         st.error(f"Error al procesar el archivo: {e}")
