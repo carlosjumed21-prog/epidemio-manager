@@ -7,7 +7,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
 # --- REGLAS DE NEGOCIO ESTRICTAS ---
@@ -22,7 +22,6 @@ MAPA_TERAPIAS = {
     "UNIDAD DE QUEMADOS": "COORD_CIRUGIA", "UCIA": "COORD_MEDICINA"
 }
 
-# Regla de auto-inclusión solo para el Excel si se marca "Todo"
 VINCULO_AUTO_INCLUSION = {
     "COORD_MEDICINA": ["UCIA", "TERAPIA POSQUIRURGICA"],
     "COORD_CIRUGIA": ["UNIDAD DE QUEMADOS"],
@@ -30,7 +29,6 @@ VINCULO_AUTO_INCLUSION = {
     "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
 
-# CATALOGO SIN MEDICINA INTERNA PEDIATRICA EN MEDICINA
 CATALOGO = {
     "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "PSIQ", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
@@ -39,7 +37,7 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
-# --- FUNCIONES DE LÓGICA ---
+# --- LÓGICA DE CLASIFICACIÓN ---
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -58,7 +56,9 @@ def sync_group(cat_name, servicios):
         st.session_state[f"serv_{cat_name}_{s}"] = master_val
 
 # --- INTERFAZ ---
-st.title("🏥 EpidemioManager - CMN 20 de Noviembre")
+st.title("🏥 EpidemioManager - ISSSTE")
+st.caption("Residencia de Epidemiología - CMN 20 de Noviembre")
+
 archivo = st.file_uploader("Subir Censo HTML", type=["html", "htm"])
 
 if archivo:
@@ -89,18 +89,19 @@ if archivo:
 
         st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
 
-        # --- CONSTRUCCIÓN DE BUCKETS EXCLUYENTES ---
+        # --- BUCKETS EXCLUYENTES (CORREGIDO PARA NEONATOLOGÍA) ---
         buckets = {}
         asignadas = set()
 
-        # 1. Bucket Terapias (Prioridad Visual)
+        # 1. Bucket Terapias
         terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
         if terapias_list:
             buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
             asignadas.update(terapias_list)
 
-        # 2. Bucket Pediatría (Prioridad para atrapar Medicina Interna Pediátrica)
-        ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and ("PEDIATRI" in e or "PEDIATRICA" in e)])
+        # 2. Bucket Pediatría (Captura Neonatología explícitamente)
+        ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and 
+                          ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
         if ped_list:
             buckets["COORD_PEDIATRIA"] = ped_list
             asignadas.update(ped_list)
@@ -117,7 +118,7 @@ if archivo:
         otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
         if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
-        # --- RENDERIZADO DE CHECKBOXES ---
+        # --- RENDERIZADO ---
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             with cols[idx % 3]:
@@ -130,22 +131,17 @@ if archivo:
 
         st.write("---")
 
-        # --- PROCESAMIENTO EXCEL ---
+        # --- GENERAR EXCEL ---
         if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
             especialidades_finales = set()
             for c_name, servs in buckets.items():
-                master_marcado = st.session_state.get(f"master_{c_name}")
-                
-                # AUTO-INCLUSIÓN: Si marcó "Todo" en la coord, incluimos sus terapias en el EXCEL
-                if master_marcado and c_name in VINCULO_AUTO_INCLUSION:
-                    for t_vinculada in VINCULO_AUTO_INCLUSION[c_name]:
-                        if t_vinculada in especialidades_encontradas:
-                            especialidades_finales.add(t_vinculada)
-                
-                # Selección normal
+                if st.session_state.get(f"master_{c_name}"):
+                    # Auto-inclusión de terapias si se marca el maestro de una coordinación
+                    if c_name in VINCULO_AUTO_INCLUSION:
+                        for t in VINCULO_AUTO_INCLUSION[c_name]:
+                            if t in especialidades_encontradas: especialidades_finales.add(t)
                 for s in servs:
-                    if st.session_state.get(f"serv_{c_name}_{s}"):
-                        especialidades_finales.add(s)
+                    if st.session_state.get(f"serv_{c_name}_{s}"): especialidades_finales.add(s)
 
             if not especialidades_finales:
                 st.warning("⚠️ Selecciona un servicio.")
@@ -162,8 +158,6 @@ if archivo:
 
                 if datos_excel:
                     df_out = pd.DataFrame(datos_excel)
-                    
-                    # --- ORDENAMIENTO ESTRICTO DE TERAPIAS ---
                     otros_servs = sorted([s for s in list(especialidades_finales) if s not in ORDEN_TERAPIAS_EXCEL])
                     mapeo_orden = ORDEN_TERAPIAS_EXCEL + otros_servs
                     df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden, ordered=True)
