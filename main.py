@@ -47,13 +47,10 @@ def obtener_especialidad_real(cama, esp_html):
         if 7401 <= val <= 7409: return "TERAPIA POSQUIRURGICA"
     return esp_html_clean
 
-# --- FUNCIÓN DE SINCRONIZACIÓN CORREGIDA ---
+# --- SINCRONIZACIÓN DE CASILLAS ---
 def sync_group(cat_name, servicios):
-    """Marca o desmarca todos los servicios de una coordinación específica"""
-    master_key = f"master_{cat_name}"
-    master_val = st.session_state[master_key]
+    master_val = st.session_state[f"master_{cat_name}"]
     for s in servicios:
-        # La llave única ahora incluye el nombre de la coordinación
         st.session_state[f"serv_{cat_name}_{s}"] = master_val
 
 # --- INTERFAZ ---
@@ -89,69 +86,97 @@ if archivo:
                 })
 
         st.write("---")
-        col_m1, col_m2 = st.columns(2)
-        with col_m1: st.subheader(f"📊 Pacientes: {len(pacs_detectados)}")
-        with col_m2: st.subheader(f"🧪 Servicios: {len(especialidades_encontradas)}")
+        st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
         st.write("---")
 
-        # --- BUCKETS DE COORDINACIÓN ---
+        # --- ORGANIZACIÓN DE SELECCIÓN ---
         buckets = {"⚠️ UNIDADES DE TERAPIA ⚠️": [e for e in especialidades_encontradas if e in MAPA_TERAPIAS]}
         for cat, items in CATALOGO.items():
             found = [e for e in especialidades_encontradas if any(kw in e for kw in items) and e not in MAPA_TERAPIAS]
             if found: buckets[cat] = found
 
-        st.markdown("### 🛠️ Configuración del Reporte")
-        
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             with cols[idx % 3]:
-                # Estilo visual para Terapias
                 header_style = "background-color:#C0392B; padding:5px; border-radius:5px; color:white;" if "TERAPIA" in cat_name else "color:inherit;"
                 st.markdown(f'<div style="{header_style}"><b>{cat_name.replace("COORD_", "")}</b></div>', unsafe_allow_html=True)
-                
                 with st.container(border=True):
-                    # Casilla MAESTRA con CALLBACK para forzar la selección
-                    st.checkbox(f"Seleccionar todo", 
-                                key=f"master_{cat_name}", 
-                                on_change=sync_group, 
-                                args=(cat_name, servicios))
-                    
+                    st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
                     for s in servicios:
-                        # La llave única serv_{cat_name}_{s} evita el error de duplicados
                         st.checkbox(s, key=f"serv_{cat_name}_{s}")
 
         st.write("---")
 
-        # --- GENERAR EXCEL ---
-        if st.button("📥 Generar y Descargar Excel", use_container_width=True, type="primary"):
-            # Recolectar de session_state buscando en todos los buckets
-            seleccionados_final = []
+        # --- GENERACIÓN DE EXCEL CON FORMATO ---
+        if st.button("🚀 GENERAR Y DESCARGAR EXCEL", use_container_width=True, type="primary"):
+            seleccionados = []
             for c_name, servs in buckets.items():
                 for s in servs:
                     if st.session_state.get(f"serv_{c_name}_{s}"):
-                        seleccionados_final.append(s)
+                        seleccionados.append(s)
 
-            if not seleccionados_final:
-                st.warning("⚠️ Debes seleccionar al menos un servicio arriba.")
+            if not seleccionados:
+                st.warning("⚠️ Selecciona al menos un servicio.")
             else:
                 fecha_hoy = datetime.now()
-                datos_finales = [p for p in pacs_detectados if p["esp_real"] in seleccionados_final]
-                
+                datos_finales = []
+                for p in pacs_detectados:
+                    if p["esp_real"] in seleccionados:
+                        # Cálculo de estancia
+                        try:
+                            f_ing = datetime.strptime(p["ING"], "%d/%m/%Y")
+                            dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - 
+                                    datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
+                        except: dias = "Rev. Fecha"
+
+                        datos_finales.append({
+                            "FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"),
+                            "ESPECIALIDAD": p["esp_real"],
+                            "CAMA": p["CAMA"], "REGISTRO": p["REG"],
+                            "PACIENTE": p["PAC"], "SEXO": p["SEXO"],
+                            "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAG"],
+                            "FECHA_INGRESO": p["ING"], "DIAS_ESTANCIA": dias
+                        })
+
                 if datos_finales:
                     df_out = pd.DataFrame(datos_finales)
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_out.to_excel(writer, index=False, sheet_name='Epidemiologia')
+                        df_out.to_excel(writer, index=False, sheet_name='Censo_Epidemio')
                     
-                    st.success(f"✅ Se han procesado {len(datos_finales)} pacientes correctamente.")
+                    # --- APLICAR FORMATO DE TABLA Y ANCHO DE COLUMNAS ---
+                    output.seek(0)
+                    wb = load_workbook(output)
+                    ws = wb.active
+                    
+                    # Añadir Tabla Estilizada
+                    ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, 
+                                       tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
+                    
+                    # Ajustar ancho de columnas automáticamente
+                    for col in ws.columns:
+                        max_length = 0
+                        column = col[0].column_letter
+                        for cell in col:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except: pass
+                        ws.column_dimensions[column].width = max_length + 4
+
+                    final_io = BytesIO()
+                    wb.save(final_io)
+                    
+                    st.success(f"✅ Excel generado con {len(datos_finales)} pacientes.")
                     st.download_button(
-                        label="💾 Guardar Archivo Excel",
-                        data=output.getvalue(),
+                        label="💾 GUARDAR ARCHIVO EXCEL",
+                        data=final_io.getvalue(),
                         file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
                     )
                 else:
-                    st.error("No se encontraron pacientes para la selección realizada.")
+                    st.error("No hay pacientes para esta selección.")
 
     except Exception as e:
-        st.error(f"Error al procesar el archivo: {e}")
+        st.error(f"Error crítico: {e}")
