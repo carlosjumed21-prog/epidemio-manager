@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# --- LÓGICA DE NEGOCIO ---
+# --- LÓGICA DE NEGOCIO (REGLAS DE CARLOS - SE MANTIENEN INTACTAS) ---
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
     "U.T.I.P.": "COORD_PEDIATRIA", "TERAPIA POSQUIRURGICA": "COORD_MEDICINA",
@@ -95,37 +95,28 @@ if archivo:
             buckets[cat].append(e)
 
         st.markdown("### 🛠️ Configuración del Reporte")
-        st.info("Marca la casilla 'Seleccionar todo' para incluir todos los servicios de esa coordinación.")
-        
-        # Usamos un set para evitar duplicados si el usuario marca la maestra y luego una individual
-        seleccion_set = set()
-        
+        st.info("Marca la casilla de la coordinación para seleccionar sus servicios.")
+
+        # Generar las columnas y los checkboxes
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             if not servicios: continue
-            
             with cols[idx % 3]:
                 with st.container(border=True):
-                    nombre_limpio = cat_name.replace("COORD_", "").replace("_", " ")
-                    # CASILLA MAESTRA
+                    nombre_limpio = cat_name.replace("COORD_", "")
+                    # CASILLA MAESTRA: 'key' es vital aquí
                     todo = st.checkbox(f"Seleccionar todo {nombre_limpio}", key=f"master_{cat_name}")
-                    
-                    # CASILLAS HIJAS
                     for s in servicios:
-                        # Si 'todo' está marcado, el valor por defecto es True
-                        seleccionado = st.checkbox(s, value=todo, key=f"serv_{s}")
-                        if seleccionado:
-                            seleccion_set.add(s)
-
-        # Convertimos el set a lista para procesar
-        seleccion_usuario = list(seleccion_set)
+                        # Forzamos que la casilla hija sea igual a la maestra si esta cambia
+                        st.checkbox(s, value=todo, key=f"serv_{s}")
 
         st.write("---")
-        # Mostramos un contador de servicios seleccionados para dar seguridad al usuario
-        st.write(f"**Servicios listos para exportar:** {len(seleccion_usuario)}")
 
         # --- GENERAR EXCEL ---
         if st.button("📥 Generar y Descargar Excel", use_container_width=True, type="primary"):
+            # RECOLECTAR SELECCIÓN: Buscamos qué casillas están marcadas en st.session_state
+            seleccion_usuario = [s for s in especialidades_encontradas if st.session_state.get(f"serv_{s}")]
+            
             if not seleccion_usuario:
                 st.warning("⚠️ Debes seleccionar al menos un servicio arriba.")
             else:
@@ -137,7 +128,7 @@ if archivo:
                             f_ing = datetime.strptime(p["FECHA_INGRESO"], "%d/%m/%Y")
                             dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - 
                                     datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
-                        except: dias = "Revisar"
+                        except: dias = "Rev."
                         
                         datos_finales.append({
                             "FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"),
@@ -157,25 +148,21 @@ if archivo:
                     output.seek(0)
                     wb = load_workbook(output)
                     ws = wb.active
-                    if not ws.dimensions == 'A1:A1':
-                        ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, 
-                                           tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
-                        for col in ws.columns:
-                            ws.column_dimensions[get_column_letter(col[0].column)].width = 25
+                    ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, 
+                                       tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
+                    for col in ws.columns:
+                        ws.column_dimensions[get_column_letter(col[0].column)].width = 25
                     
                     final_io = BytesIO()
                     wb.save(final_io)
                     
-                    st.success(f"✅ ¡Proceso completado! {len(datos_finales)} pacientes incluidos.")
+                    st.success(f"✅ ¡Éxito! {len(datos_finales)} pacientes procesados.")
                     st.download_button(
                         label="💾 Guardar Archivo Excel",
                         data=final_io.getvalue(),
                         file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-                else:
-                    st.error("No se encontraron datos para los servicios seleccionados.")
 
     except Exception as e:
         st.error(f"Error al procesar el archivo: {e}")
