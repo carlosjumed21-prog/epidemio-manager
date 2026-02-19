@@ -7,14 +7,27 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# --- LÓGICA DE NEGOCIO (REGLAS DE CARLOS) ---
+# --- REGLAS DE NEGOCIO ESTRICTAS ---
+ORDEN_TERAPIAS_STRICTO = [
+    "UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", 
+    "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"
+]
+
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
     "U.T.I.P.": "COORD_PEDIATRIA", "TERAPIA POSQUIRURGICA": "COORD_MEDICINA",
     "UNIDAD DE QUEMADOS": "COORD_CIRUGIA", "UCIA": "COORD_MEDICINA"
+}
+
+# Relación para la auto-inclusión en el Excel
+VINCULO_COORD_TERAPIA = {
+    "COORD_MEDICINA": ["UCIA", "TERAPIA POSQUIRURGICA"],
+    "COORD_CIRUGIA": ["UNIDAD DE QUEMADOS"],
+    "COORD_MODULARES": ["UNIDAD CORONARIA"],
+    "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
 
 CATALOGO = {
@@ -47,7 +60,6 @@ def obtener_especialidad_real(cama, esp_html):
         if 7401 <= val <= 7409: return "TERAPIA POSQUIRURGICA"
     return esp_html_clean
 
-# --- SINCRONIZACIÓN DE CASILLAS ---
 def sync_group(cat_name, servicios):
     master_val = st.session_state[f"master_{cat_name}"]
     for s in servicios:
@@ -57,7 +69,7 @@ def sync_group(cat_name, servicios):
 st.title("🏥 EpidemioManager - ISSSTE")
 st.caption("Residencia de Epidemiología - CMN 20 de Noviembre")
 
-archivo = st.file_uploader("Sube el reporte HTML del censo", type=["html", "htm"])
+archivo = st.file_uploader("Cargar Censo Diario (HTML)", type=["html", "htm"])
 
 if archivo:
     try:
@@ -87,9 +99,8 @@ if archivo:
 
         st.write("---")
         st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
-        st.write("---")
 
-        # --- ORGANIZACIÓN DE SELECCIÓN ---
+        # --- SELECCIÓN ---
         buckets = {"⚠️ UNIDADES DE TERAPIA ⚠️": [e for e in especialidades_encontradas if e in MAPA_TERAPIAS]}
         for cat, items in CATALOGO.items():
             found = [e for e in especialidades_encontradas if any(kw in e for kw in items) and e not in MAPA_TERAPIAS]
@@ -107,22 +118,30 @@ if archivo:
 
         st.write("---")
 
-        # --- GENERACIÓN DE EXCEL CON FORMATO ---
-        if st.button("🚀 GENERAR Y DESCARGAR EXCEL", use_container_width=True, type="primary"):
-            seleccionados = []
+        if st.button("🚀 GENERAR EXCEL GRUPAL", use_container_width=True, type="primary"):
+            # LÓGICA DE FILTRADO FINAL CON AUTO-INCLUSIÓN
+            especialidades_a_incluir = set()
             for c_name, servs in buckets.items():
+                master_val = st.session_state.get(f"master_{c_name}")
+                
+                # Regla: Si marcó todo de una coordinación, incluimos sus terapias
+                if master_val and c_name in VINCULO_COORD_TERAPIA:
+                    for t in VINCULO_COORD_TERAPIA[c_name]:
+                        if t in especialidades_encontradas:
+                            especialidades_a_incluir.add(t)
+                
+                # Inclusión normal por check individual
                 for s in servs:
                     if st.session_state.get(f"serv_{c_name}_{s}"):
-                        seleccionados.append(s)
+                        especialidades_a_incluir.add(s)
 
-            if not seleccionados:
+            if not especialidades_a_incluir:
                 st.warning("⚠️ Selecciona al menos un servicio.")
             else:
                 fecha_hoy = datetime.now()
                 datos_finales = []
                 for p in pacs_detectados:
-                    if p["esp_real"] in seleccionados:
-                        # Cálculo de estancia
+                    if p["esp_real"] in especialidades_a_incluir:
                         try:
                             f_ing = datetime.strptime(p["ING"], "%d/%m/%Y")
                             dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - 
@@ -140,43 +159,43 @@ if archivo:
 
                 if datos_finales:
                     df_out = pd.DataFrame(datos_finales)
+                    
+                    # --- ORDENAMIENTO ESTRICTO ---
+                    # 1. Definimos el orden: Primero Terapias (según tu lista) y luego el resto alfabético
+                    lista_final_seleccionada = list(especialidades_a_incluir)
+                    otros_servicios = sorted([s for s in lista_final_seleccionada if s not in ORDEN_TERAPIAS_STRICTO])
+                    mapeo_orden_completo = ORDEN_TERAPIAS_STRICTO + otros_servicios
+                    
+                    # 2. Aplicamos el orden categórico
+                    df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden_completo, ordered=True)
+                    df_out = df_out.sort_values(['ESPECIALIDAD', 'CAMA'])
+
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_out.to_excel(writer, index=False, sheet_name='Censo_Epidemio')
+                        df_out.to_excel(writer, index=False, sheet_name='Epidemiologia')
                     
-                    # --- APLICAR FORMATO DE TABLA Y ANCHO DE COLUMNAS ---
                     output.seek(0)
                     wb = load_workbook(output)
                     ws = wb.active
-                    
-                    # Añadir Tabla Estilizada
                     ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, 
                                        tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
                     
-                    # Ajustar ancho de columnas automáticamente
                     for col in ws.columns:
-                        max_length = 0
-                        column = col[0].column_letter
-                        for cell in col:
-                            try:
-                                if len(str(cell.value)) > max_length:
-                                    max_length = len(str(cell.value))
-                            except: pass
-                        ws.column_dimensions[column].width = max_length + 4
+                        ws.column_dimensions[get_column_letter(col[0].column)].width = 25
 
                     final_io = BytesIO()
                     wb.save(final_io)
                     
-                    st.success(f"✅ Excel generado con {len(datos_finales)} pacientes.")
+                    st.success(f"✅ Excel generado correctamente.")
                     st.download_button(
-                        label="💾 GUARDAR ARCHIVO EXCEL",
+                        label="💾 DESCARGAR EXCEL",
                         data=final_io.getvalue(),
                         file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
                 else:
-                    st.error("No hay pacientes para esta selección.")
+                    st.error("No se encontraron pacientes para esta selección.")
 
     except Exception as e:
         st.error(f"Error crítico: {e}")
