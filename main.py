@@ -29,7 +29,6 @@ VINCULO_AUTO_INCLUSION = {
     "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
 
-# MAPA DE COLORES PARA LA INTERFAZ
 COLORES_INTERFAZ = {
     "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B",  # Rojo
     "COORD_PEDIATRIA": "#5DADE2",           # Azul claro
@@ -37,18 +36,19 @@ COLORES_INTERFAZ = {
     "COORD_GINECOLOGIA": "#F06292",         # Rosa
     "COORD_MODULARES": "#E67E22",           # Naranja
     "OTRAS_ESPECIALIDADES": "#2C3E50",      # Gris fuerte
-    "COORD_CIRUGIA": "#117864"              # Verde (default)
+    "COORD_CIRUGIA": "#117864"              # Verde
 }
 
+# CATALOGO AJUSTADO: PSIQUIATRIA MOVIDA A MODULARES
 CATALOGO = {
-    "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "PSIQ", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
+    "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
-    "COORD_MODULARES": ["ANGIOLOGIA", "VASCULAR", "CARDIOLOGIA", "CARDIOVASCULAR", "TORAX", "NEUMO", "HEMATO", "NEUROCIRUGIA", "NEUROLOGIA", "ONCOLOGIA", "CORONARIA", "UNIDAD CORONARIA"],
+    "COORD_MODULARES": ["ANGIOLOGIA", "VASCULAR", "CARDIOLOGIA", "CARDIOVASCULAR", "TORAX", "NEUMO", "HEMATO", "NEUROCIRUGIA", "NEUROLOGIA", "ONCOLOGIA", "CORONARIA", "UNIDAD CORONARIA", "PSIQ", "PSIQUIATRIA"],
     "COORD_PEDIATRIA": ["PEDIATRI", "PEDIATRICA", "NEONATO", "NEONATOLOGIA", "CUNERO", "UTIP", "U.T.I.P", "UCIN", "U.C.I.N"],
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
-# --- FUNCIONES DE LÓGICA ---
+# --- LÓGICA DE CLASIFICACIÓN ---
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -100,20 +100,23 @@ if archivo:
 
         st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
 
-        # --- CONSTRUCCIÓN DE BUCKETS EXCLUYENTES ---
+        # --- BUCKETS EXCLUYENTES ---
         buckets = {}
         asignadas = set()
 
+        # 1. Bucket Terapias
         terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
         if terapias_list:
             buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
             asignadas.update(terapias_list)
 
+        # 2. Bucket Pediatría
         ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
         if ped_list:
             buckets["COORD_PEDIATRIA"] = ped_list
             asignadas.update(ped_list)
 
+        # 3. Resto de Coordinaciones (Incluye Psiquiatría en Modulares)
         for cat, kws in CATALOGO.items():
             if cat == "COORD_PEDIATRIA": continue
             found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
@@ -121,16 +124,15 @@ if archivo:
                 buckets[cat] = found
                 asignadas.update(found)
 
+        # 4. Otras
         otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
         if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
-        # --- RENDERIZADO CON COLORES ---
+        # --- RENDERIZADO ---
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             with cols[idx % 3]:
-                # Aplicamos el color solicitado
                 color = COLORES_INTERFAZ.get(cat_name, "#5D6D7E")
-                
                 st.markdown(f'<div style="background-color:{color}; padding:8px; border-radius:5px 5px 0px 0px; color:white; text-align:center;"><b>{cat_name.replace("COORD_", "")}</b></div>', unsafe_allow_html=True)
                 with st.container(border=True):
                     st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
@@ -139,14 +141,14 @@ if archivo:
 
         st.write("---")
 
-        # --- PROCESAMIENTO EXCEL ---
+        # --- GENERAR EXCEL ---
         if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
             especialidades_finales = set()
             for c_name, servs in buckets.items():
-                master_marcado = st.session_state.get(f"master_{c_name}")
-                if master_marcado and c_name in VINCULO_AUTO_INCLUSION:
-                    for t in VINCULO_AUTO_INCLUSION[c_name]:
-                        if t in especialidades_encontradas: especialidades_finales.add(t)
+                if st.session_state.get(f"master_{c_name}"):
+                    if c_name in VINCULO_AUTO_INCLUSION:
+                        for t in VINCULO_AUTO_INCLUSION[c_name]:
+                            if t in especialidades_encontradas: especialidades_finales.add(t)
                 for s in servs:
                     if st.session_state.get(f"serv_{c_name}_{s}"): especialidades_finales.add(s)
 
@@ -185,6 +187,5 @@ if archivo:
                     wb.save(final_io)
                     st.success(f"✅ Reporte generado.")
                     st.download_button(label="💾 DESCARGAR EXCEL", data=final_io.getvalue(), file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
     except Exception as e:
         st.error(f"Error: {e}")
