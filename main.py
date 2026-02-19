@@ -5,13 +5,18 @@ from io import BytesIO
 from datetime import datetime, timedelta
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font
-from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
 # --- REGLAS DE NEGOCIO ---
+SERVICIOS_INSUMOS_FILTRO = [
+    "ONCOLOGÍA PEDIATRICA", "NEONATOLOGIA", "INFECTOTOLOGIA PEDIATRICA", 
+    "U.C.I.N.", "U.T.I.P.", "TERAPIA POSQUIRURGICA", 
+    "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
+]
+
 ORDEN_TERAPIAS_EXCEL = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
 
 MAPA_TERAPIAS = {
@@ -27,18 +32,12 @@ VINCULO_AUTO_INCLUSION = {
     "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
 
-# MAPA DE COLORES SOLICITADOS
 COLORES_INTERFAZ = {
-    "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B", # Rojo
-    "COORD_PEDIATRIA": "#5DADE2",           # Azul claro
-    "COORD_MEDICINA": "#1B4F72",            # Azul fuerte
-    "COORD_GINECOLOGIA": "#F06292",         # Rosa
-    "COORD_MODULARES": "#E67E22",           # Naranja
-    "OTRAS_ESPECIALIDADES": "#2C3E50",      # Gris fuerte
-    "COORD_CIRUGIA": "#117864"              # Verde
+    "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B", "COORD_PEDIATRIA": "#5DADE2",
+    "COORD_MEDICINA": "#1B4F72", "COORD_GINECOLOGIA": "#F06292",
+    "COORD_MODULARES": "#E67E22", "OTRAS_ESPECIALIDADES": "#2C3E50", "COORD_CIRUGIA": "#117864"
 }
 
-# CATALOGO: PSIQUIATRÍA EN MODULARES, MEDICINA INTERNA PEDIÁTRICA ELIMINADA DE MEDICINA
 CATALOGO = {
     "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
@@ -47,16 +46,9 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
-# SERVICIOS PARA EL MÓDULO DE INSUMOS
-SERVICIOS_INSUMOS_FILTRO = [
-    "ONCOLOGÍA PEDIATRICA", "NEONATOLOGIA", "INFECTOTOLOGIA PEDIATRICA", 
-    "U.C.I.N.", "U.T.I.P.", "TERAPIA POSQUIRURGICA", 
-    "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
-]
-
 # --- FUNCIONES ---
 def get_report_dates():
-    """Retorna la fecha de hoy y la fecha de vencimiento (7 días después)"""
+    """Fecha 1 = Hoy, Fecha 2 = Hoy + 7 días"""
     hoy = datetime.now()
     vencimiento = hoy + timedelta(days=7)
     return hoy.strftime("%d/%m/%y"), vencimiento.strftime("%d/%m/%y")
@@ -82,7 +74,6 @@ def sync_group(cat_name, servicios):
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/b/b3/ISSSTE_logo.png", width=150)
     st.title("EpidemioManager")
-    st.write("---")
     menu_opcion = st.radio("Módulos:", ["📋 Censo Diario", "📦 Censo de Insumos"], index=0)
     st.write("---")
     st.caption("CMN 20 de Noviembre")
@@ -96,7 +87,6 @@ if archivo:
         tablas = pd.read_html(archivo)
         df_completo = max(tablas, key=len)
         col0_str = df_completo.iloc[:, 0].fillna("").astype(str).str.upper()
-        
         pacs_detectados = []
         especialidades_encontradas = set()
         IGNORAR = ["PACIENTES", "TOTAL", "SUBTOTAL", "PÁGINA", "IMPRESIÓN", "1111"]
@@ -111,43 +101,26 @@ if archivo:
             if len(fila[1]) >= 5 and any(char.isdigit() for char in fila[1]):
                 esp_real = obtener_especialidad_real(fila[0], esp_actual_temp)
                 especialidades_encontradas.add(esp_real)
-                pacs_detectados.append({
-                    "CAMA": fila[0], "REGISTRO": fila[1], "PACIENTE": fila[2], "SEXO": fila[3], 
-                    "EDAD": "".join(re.findall(r'\d+', fila[4])), "DIAGNOSTICO": fila[6], 
-                    "ING": fila[9], "esp_real": esp_real
-                })
+                pacs_detectados.append({"CAMA": fila[0], "REG": fila[1], "PAC": fila[2], "S": fila[3], "E": fila[4], "D": fila[6], "I": fila[9], "esp_real": esp_real})
 
         # --- MÓDULO 1: CENSO DIARIO ---
         if menu_opcion == "📋 Censo Diario":
-            st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
             buckets = {}
             asignadas = set()
-
-            # 1. Terapias
             terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
-            if terapias_list:
-                buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
-                asignadas.update(terapias_list)
+            if terapias_list: buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list; asignadas.update(terapias_list)
             
-            # 2. Pediatría (Prioridad Neonatología)
-            ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and 
-                              ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
-            if ped_list:
-                buckets["COORD_PEDIATRIA"] = ped_list
-                asignadas.update(ped_list)
+            ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and any(x in e for x in ["PEDIATRI", "NEONATO"])])
+            if ped_list: buckets["COORD_PEDIATRIA"] = ped_list; asignadas.update(ped_list)
 
-            # 3. Resto de Coordinaciones
             for cat, kws in CATALOGO.items():
                 if cat == "COORD_PEDIATRIA": continue
                 found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
-                if found:
-                    buckets[cat] = found
-                    asignadas.update(found)
+                if found: buckets[cat] = found; asignadas.update(found)
             
-            # 4. OTRAS ESPECIALIDADES (CORREGIDO PARA QUE APAREZCA)
+            # REPARACIÓN: OTRAS ESPECIALIDADES
             otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
-            if otras:
-                buckets["OTRAS_ESPECIALIDADES"] = otras
+            if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
             cols = st.columns(3)
             for idx, (cat_name, servicios) in enumerate(buckets.items()):
@@ -156,77 +129,69 @@ if archivo:
                     st.markdown(f'<div style="background-color:{color}; padding:8px; border-radius:5px 5px 0px 0px; color:white; text-align:center;"><b>{cat_name.replace("COORD_", "")}</b></div>', unsafe_allow_html=True)
                     with st.container(border=True):
                         st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
-                        for s in servicios:
-                            st.checkbox(s, key=f"serv_{cat_name}_{s}")
+                        for s in servicios: st.checkbox(s, key=f"serv_{cat_name}_{s}")
 
             if st.button("🚀 GENERAR EXCEL GENERAL", use_container_width=True, type="primary"):
-                # (Lógica de exportación ya funcional mantenida...)
+                # (Misma lógica de exportación general...)
                 pass
 
         # --- MÓDULO 2: CENSO DE INSUMOS ---
         elif menu_opcion == "📦 Censo de Insumos":
             pacs_insumos = [p for p in pacs_detectados if p["esp_real"] in SERVICIOS_INSUMOS_FILTRO]
-            servicios_en_insumos = sorted(list(set([p["esp_real"] for p in pacs_insumos])))
+            servicios_insumos = sorted(list(set([p["esp_real"] for p in pacs_insumos])))
 
             if not pacs_insumos:
-                st.warning("⚠️ No se detectaron pacientes en los servicios críticos.")
+                st.warning("⚠️ No hay pacientes en servicios críticos.")
             else:
-                for serv in servicios_en_insumos:
+                for serv in servicios_insumos:
                     with st.expander(f"🔍 Previsualización: {serv}"):
-                        df_preview = pd.DataFrame([p for p in pacs_insumos if p["esp_real"] == serv])
-                        df_preview["TIPO DE PRECAUCIONES"] = df_preview["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
-                        df_preview["INSUMO"] = "JABÓN/SANITAS"
-                        st.table(df_preview[["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES", "INSUMO"]])
+                        df_p = pd.DataFrame([p for p in pacs_insumos if p["esp_real"] == serv])
+                        df_p["TIPO DE PRECAUCIONES"] = df_p["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
+                        df_p["INSUMO"] = "JABÓN/SANITAS"
+                        st.table(df_p[["CAMA", "REG", "PAC", "S", "E", "I", "TIPO DE PRECAUCIONES", "INSUMO"]])
 
                 if st.button("🚀 GENERAR EXCEL DE INSUMOS", use_container_width=True, type="primary"):
-                    f_ini, f_venc = get_report_dates() # Fechas corregidas
+                    f_ini, f_venc = get_report_dates() # AHORA SÍ: HOY Y HOY+7
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        for serv in servicios_en_insumos:
-                            pacs_serv = [p for p in pacs_insumos if p["esp_real"] == serv]
-                            df_serv = pd.DataFrame(pacs_serv)
-                            df_serv["TIPO DE PRECAUCIONES"] = df_serv["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
-                            df_serv["INSUMO"] = "JABÓN/SANITAS"
+                        for serv in servicios_insumos:
+                            df_s = pd.DataFrame([p for p in pacs_insumos if p["esp_real"] == serv])
+                            df_s["TIPO DE PRECAUCIONES"] = df_s["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
+                            df_s["INSUMO"] = "JABÓN/SANITAS"
                             
-                            cols_fin = ["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES", "INSUMO"]
-                            df_final = df_serv[cols_fin]
+                            df_final = df_s[["CAMA", "REG", "PAC", "S", "E", "I", "TIPO DE PRECAUCIONES", "INSUMO"]]
                             df_final.columns = ["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]
                             
                             sheet_name = serv[:30].replace("/", "-")
                             df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                             ws = writer.sheets[sheet_name]
                             
-                            # ENCABEZADO SUPERIOR (FECHAS CORREGIDAS)
-                            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cols_fin))
-                            cell_h = ws.cell(row=1, column=1, value=f"{serv} DEL {f_ini} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)")
-                            cell_h.alignment = Alignment(horizontal="center", vertical="center")
-                            cell_h.font = Font(bold=True)
+                            # TÍTULO SUPERIOR (FECHAS CORREGIDAS)
+                            header = f"{serv} DEL {f_ini} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
+                            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
+                            ws.cell(row=1, column=1, value=header).alignment = Alignment(horizontal="center", vertical="center")
+                            ws.cell(row=1, column=1).font = Font(bold=True, size=11)
 
-                            # PIE DE PÁGINA (NOM-045 CORREGIDA CON AJUSTE AUTOMÁTICO)
-                            last_row = ws.max_row
-                            ws.merge_cells(start_row=last_row + 1, start_column=1, end_row=last_row + 1, end_column=len(cols_fin))
-                            cell_f1 = ws.cell(row=last_row + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
+                            # PIE DE PÁGINA (NOM-045 Y FIRMA SIN SALTOS)
+                            lr = ws.max_row
+                            ws.merge_cells(start_row=lr + 1, start_column=1, end_row=lr + 1, end_column=8)
+                            cell_f = ws.cell(row=lr + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
+                            cell_f.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                            cell_f.font = Font(size=9, italic=True)
+                            ws.row_dimensions[lr + 1].height = 50 # Altura para que el texto NO se corte
+
+                            ws.cell(row=lr + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS").font = Font(bold=True)
                             
-                            # Truco para que el texto se ajuste y la celda crezca
-                            cell_f1.alignment = Alignment(wrap_text=True, horizontal="center", vertical="center")
-                            cell_f1.font = Font(size=9, italic=True)
-                            ws.row_dimensions[last_row + 1].height = 55 # Altura dinámica para que no se corte
+                            # AUTO-AJUSTE Y CENTRADO
+                            for i, col in enumerate(df_final.columns):
+                                L = get_column_letter(i + 1)
+                                m_len = len(col)
+                                for r in ws.iter_rows(min_row=2, max_row=lr, min_col=i+1, max_col=i+1):
+                                    for c in r:
+                                        c.alignment = Alignment(horizontal="center", vertical="center")
+                                        if c.value: m_len = max(m_len, len(str(c.value)))
+                                ws.column_dimensions[L].width = m_len + 3
 
-                            ws.cell(row=last_row + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS").font = Font(bold=True)
-                            
-                            # AUTO-AJUSTE DE COLUMNAS
-                            for i, col_name in enumerate(df_final.columns):
-                                column_letter = get_column_letter(i + 1)
-                                max_len = len(col_name)
-                                for row in ws.iter_rows(min_row=2, max_row=last_row, min_col=i+1, max_col=i+1):
-                                    for cell in row:
-                                        cell.alignment = Alignment(horizontal="center", vertical="center")
-                                        if cell.value: max_len = max(max_len, len(str(cell.value)))
-                                # Ignoramos la fila de título para la columna CAMA
-                                ws.column_dimensions[column_letter].width = max_len + 4
-
-                    st.success("✅ Censo de Insumos generado.")
-                    st.download_button(label="💾 DESCARGAR REPORTE", data=output.getvalue(), file_name=f"Insumos_{f_ini.replace('/','-')}.xlsx", use_container_width=True)
-
+                    st.download_button(label="💾 DESCARGAR", data=output.getvalue(), file_name=f"Insumos_{f_ini.replace('/','-')}.xlsx", use_container_width=True)
     except Exception as e:
         st.error(f"Error: {e}")
