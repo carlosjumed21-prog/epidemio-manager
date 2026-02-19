@@ -10,7 +10,7 @@ from openpyxl.utils import get_column_letter
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# --- LÓGICA DE NEGOCIO (Respetando tus reglas de CMN 20 de Noviembre) ---
+# --- LÓGICA DE NEGOCIO (REGLAS DE CARLOS) ---
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
     "U.T.I.P.": "COORD_PEDIATRIA", "TERAPIA POSQUIRURGICA": "COORD_MEDICINA",
@@ -25,6 +25,14 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
+def clasificar_especialidad(nombre_esp):
+    n = nombre_esp.upper()
+    if n in MAPA_TERAPIAS: return "COORD_TERAPIAS"
+    if "PEDIATRICA" in n or "PEDIATRI" in n: return "COORD_PEDIATRIA"
+    for c, kws in CATALOGO.items():
+        if any(kw in n for kw in kws): return c
+    return "OTRAS_ESPECIALIDADES"
+
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -36,11 +44,18 @@ def obtener_especialidad_real(cama, esp_html):
     if c.startswith("73"): return "UCIA"
     return esp_html_clean
 
+# --- FUNCIONES DE SINCRONIZACIÓN (EL TRUCO) ---
+def sync_group(cat_name, servicios):
+    """Sincroniza todas las casillas hijas con el estado de la maestra"""
+    master_val = st.session_state[f"master_{cat_name}"]
+    for s in servicios:
+        st.session_state[f"serv_{s}"] = master_val
+
 # --- INTERFAZ ---
 st.title("🏥 EpidemioManager - ISSSTE")
-st.caption("Residente: Carlos | Epidemiología - CMN 20 de Noviembre")
+st.caption("Control Epidemiológico | CMN 20 de Noviembre")
 
-archivo = st.file_uploader("Subir Censo HTML", type=["html", "htm"])
+archivo = st.file_uploader("Sube el archivo HTML", type=["html", "htm"])
 
 if archivo:
     try:
@@ -62,42 +77,36 @@ if archivo:
                 especialidades_encontradas.add(esp_real)
                 pacs_detectados.append({**dict(zip(["CAMA", "REG", "PAC", "SEXO", "EDAD", "D", "DIAG", "F", "H", "ING"], fila)), "esp_real": esp_real})
 
-        # --- BUCKETS (Agrupación) ---
+        st.write(f"### 📊 Pacientes: {len(pacs_detectados)} | Servicios: {len(especialidades_encontradas)}")
+
+        # --- ORGANIZACIÓN ---
         buckets = {"⚠️ UNIDADES DE TERAPIA ⚠️": [e for e in especialidades_encontradas if e in MAPA_TERAPIAS]}
-        # Agregar el resto de coordinaciones
         for cat, items in CATALOGO.items():
             found = [e for e in especialidades_encontradas if any(kw in e for kw in items) and e not in MAPA_TERAPIAS]
             if found: buckets[cat] = found
 
-        st.write("---")
-        st.subheader(f"2. Servicios Detectados ({len(pacs_detectados)} pacientes)")
-
-        # --- LÓGICA DE SELECCIÓN MAESTRA ---
-        for cat_name, servicios in buckets.items():
-            # Estilo visual de la cabecera (Rojo para terapias, Gris para el resto)
-            bg_color = "#C0392B" if "TERAPIA" in cat_name else "#2E4053"
-            
-            st.markdown(f"""<div style="background-color:{bg_color}; padding:10px; border-radius:5px; margin-bottom:5px;">
-                <h4 style="color:white; margin:0;">{cat_name}</h4></div>""", unsafe_allow_html=True)
-            
-            # Checkbox Maestro
-            master_key = f"master_{cat_name}"
-            todo = st.checkbox(f"Seleccionar todo: {cat_name}", key=master_key)
-            
-            # Checkboxes Hijos
-            for s in servicios:
-                # El valor del hijo depende del maestro
-                st.checkbox(s, value=todo, key=f"s_{s}")
-
-        st.write("---")
+        # --- SELECCIÓN ---
+        cols = st.columns(3)
+        for idx, (cat_name, servicios) in enumerate(buckets.items()):
+            with cols[idx % 3]:
+                with st.container(border=True):
+                    # Casilla MAESTRA con CALLBACK
+                    st.checkbox(f"TODO {cat_name.replace('COORD_', '')}", 
+                                key=f"master_{cat_name}", 
+                                on_change=sync_group, 
+                                args=(cat_name, servicios))
+                    
+                    # Casillas HIJAS
+                    for s in servicios:
+                        st.checkbox(s, key=f"serv_{s}")
 
         # --- BOTÓN GENERAR ---
         if st.button("🚀 GENERAR EXCEL", type="primary", use_container_width=True):
-            # Recolección forzada del estado de las casillas
-            seleccionados = [s for s in especialidades_encontradas if st.session_state.get(f"s_{s}")]
+            # Recolección desde el estado de sesión
+            seleccionados = [s for s in especialidades_encontradas if st.session_state.get(f"serv_{s}")]
             
             if not seleccionados:
-                st.error("⚠️ Debes seleccionar al menos un servicio arriba.")
+                st.error("⚠️ Error: No has seleccionado ningún servicio. Marca las casillas arriba.")
             else:
                 fecha_hoy = datetime.now()
                 datos_excel = []
@@ -111,13 +120,10 @@ if archivo:
                             "INGRESO": p["ING"]
                         })
 
-                # Crear Excel
                 output = BytesIO()
                 pd.DataFrame(datos_excel).to_excel(output, index=False)
-                output.seek(0)
-                
-                st.success(f"Excel listo con {len(datos_excel)} pacientes.")
-                st.download_button("💾 DESCARGAR EXCEL", data=output.read(), 
+                st.success(f"Listo: {len(datos_excel)} pacientes.")
+                st.download_button("💾 DESCARGAR EXCEL", data=output.getvalue(), 
                                    file_name=f"Censo_{fecha_hoy.strftime('%d%m%Y')}.xlsx",
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
