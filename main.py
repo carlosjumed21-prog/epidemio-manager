@@ -184,3 +184,74 @@ if archivo:
 
     except Exception as e:
         st.error(f"Error: {e}")
+
+# --- MÓDULO 2: CENSO DE INSUMOS ---
+        elif menu_opcion == "📦 Censo de Insumos":
+            st.subheader("Filtro de Insumos Críticos")
+            
+            # 1. Filtrar solo los servicios solicitados
+            pacs_insumos = [p for p in pacs_detectados if p["esp_real"] in SERVICIOS_INSUMOS_FILTRO]
+            servicios_en_insumos = sorted(list(set([p["esp_real"] for p in pacs_insumos])))
+
+            if not pacs_insumos:
+                st.warning("No se detectaron pacientes en los servicios críticos de insumos.")
+            else:
+                st.write(f"Pacientes detectados para insumos: **{len(pacs_insumos)}**")
+                
+                # Visualización previa por servicio
+                for serv in servicios_en_insumos:
+                    with st.expander(f"Previsualización: {serv}", expanded=False):
+                        df_preview = pd.DataFrame([p for p in pacs_insumos if p["esp_real"] == serv])
+                        df_preview["TIPO DE PRECAUCIONES"] = df_preview["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
+                        df_preview["INSUMO"] = "JABÓN/SANITAS"
+                        st.table(df_preview[["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]])
+
+                if st.button("🚀 GENERAR EXCEL DE INSUMOS", use_container_width=True, type="primary"):
+                    lunes_ini, lunes_fin = get_monday_dates()
+                    output = BytesIO()
+                    
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        for serv in servicios_en_insumos:
+                            pacs_serv = [p for p in pacs_insumos if p["esp_real"] == serv]
+                            df_serv = pd.DataFrame(pacs_serv)
+                            df_serv["TIPO DE PRECAUCIONES"] = df_serv["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
+                            df_serv["INSUMO"] = "JABÓN/SANITAS"
+                            
+                            # Seleccionar columnas finales
+                            cols_finales = ["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]
+                            df_final = df_serv[cols_finales]
+                            
+                            # Nombre de pestaña corto
+                            sheet_name = serv[:30].replace("/", "-")
+                            df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=2)
+                            
+                            # Formato con Openpyxl
+                            ws = writer.sheets[sheet_name]
+                            
+                            # Encabezado Superior (Fila 1)
+                            header_text = f"{serv} VIGENCIA DEL {lunes_ini} AL {lunes_fin} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
+                            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cols_finales))
+                            cell_h = ws.cell(row=1, column=1, value=header_text)
+                            cell_h.alignment = Alignment(horizontal="center")
+                            cell_h.font = Font(bold=True)
+
+                            # Pies de página
+                            last_row = ws.max_row
+                            # Footer 1 (NOM-045)
+                            ws.merge_cells(start_row=last_row + 2, start_column=1, end_row=last_row + 2, end_column=len(cols_finales))
+                            cell_f1 = ws.cell(row=last_row + 2, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
+                            cell_f1.alignment = Alignment(horizontal="center")
+                            cell_f1.font = Font(size=9, italic=True)
+
+                            # Footer 2 (Autorizó)
+                            ws.cell(row=last_row + 4, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS")
+                            
+                            # Ajuste de columnas
+                            for i, col in enumerate(cols_finales):
+                                ws.column_dimensions[get_column_letter(i+1)].width = 20
+
+                    st.success("✅ Censo de Insumos generado correctamente.")
+                    st.download_button("💾 DESCARGAR REPORTE DE INSUMOS", data=output.getvalue(), file_name=f"Insumos_{datetime.now().strftime('%d%m%Y')}.xlsx")
+
+    except Exception as e:
+        st.error(f"Error: {e}")
