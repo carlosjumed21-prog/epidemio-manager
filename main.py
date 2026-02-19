@@ -7,18 +7,17 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
-# --- CONFIGURACIÓN Y ESTILOS ---
-st.set_page_config(page_title="EpidemioManager Web", layout="wide")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# Estilo para que se vea más profesional (similar a tu modo dark)
+# Lógica de colores y estilos
 st.markdown("""
     <style>
-    .main { background-color: #1a1a1a; color: white; }
-    .stMetric { background-color: #262730; padding: 15px; border-radius: 10px; border: 1px solid #444; }
+    .stMetric { background-color: #1e1e1e; padding: 15px; border-radius: 10px; border: 1px solid #333; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- CONSTANTES Y LÓGICA ORIGINAL ---
+# --- LÓGICA DE NEGOCIO (TU CÓDIGO ORIGINAL) ---
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
     "U.T.I.P.": "COORD_PEDIATRIA", "TERAPIA POSQUIRURGICA": "COORD_MEDICINA",
@@ -59,10 +58,10 @@ def obtener_especialidad_real(cama, esp_html):
     return esp_html_clean
 
 # --- INTERFAZ ---
-st.title("🛡️ EpidemioManager - Control UNAM")
-st.markdown("---")
+st.title("🏥 EpidemioManager - ISSSTE")
+st.subheader("Control Epidemiológico CMN 20 de Noviembre")
 
-archivo = st.file_uploader("📂 Selecciona el archivo HTML del Censo Diario", type=["html", "htm"])
+archivo = st.file_uploader("Sube el archivo HTML del Censo", type=["html", "htm"])
 
 if archivo:
     try:
@@ -70,114 +69,118 @@ if archivo:
         df_completo = max(tablas, key=len)
         col0_str = df_completo.iloc[:, 0].fillna("").astype(str).str.upper()
         
-        # 1. ANALIZAR ESPECIALIDADES DISPONIBLES
-        pacs_ini = 0
-        lista_esp_detectadas = set()
-        esp_actual_temp = "SIN_CLASIFICAR"
+        # --- ANÁLISIS PROFUNDO DE DATOS ---
+        pacs_detectados = []
+        especialidades_encontradas = set()
         IGNORAR = ["PACIENTES", "TOTAL", "SUBTOTAL", "PÁGINA", "IMPRESIÓN", "1111"]
-
+        
+        esp_actual_temp = "SIN_ESPECIALIDAD"
         for i, val in enumerate(col0_str):
             if "ESPECIALIDAD:" in val:
                 esp_actual_temp = val
                 continue
-            reg_val = str(df_completo.iloc[i, 1])
-            if any(x in val for x in IGNORAR): continue
-            if len(reg_val) >= 5 and any(char.isdigit() for char in reg_val):
-                pacs_ini += 1
-                esp_real = obtener_especialidad_real(val, esp_actual_temp)
-                lista_esp_detectadas.add(esp_real)
+            
+            fila = [str(x).strip() for x in df_completo.iloc[i].values]
+            cama, registro = fila[0], fila[1]
+            
+            if any(x in cama for x in IGNORAR): continue
+            
+            # Validación de paciente real (tu regla de oro)
+            if len(registro) >= 5 and any(char.isdigit() for char in registro):
+                esp_real = obtener_especialidad_real(cama, esp_actual_temp)
+                especialidades_encontradas.add(esp_real)
+                
+                # Guardamos los datos temporalmente
+                pacs_detectados.append({
+                    "cama": cama, "registro": registro, "paciente": fila[2],
+                    "sexo": fila[3], "edad": "".join(re.findall(r'\d+', fila[4])),
+                    "diag": fila[6], "ingreso": fila[9], "esp_real": esp_real
+                })
 
-        # Dashboard de Stats
-        c1, c2 = st.columns(2)
-        c1.metric("TOTAL PACIENTES", pacs_ini)
-        c2.metric("ESPECIALIDADES DETECTADAS", len(lista_esp_detectadas))
+        # --- MÉTRICAS ---
+        m1, m2 = st.columns(2)
+        m1.metric("Pacientes en Censo", len(pacs_detectados))
+        m2.metric("Servicios Detectados", len(especialidades_encontradas))
 
-        # 2. SELECCIÓN VISUAL (Buckets)
-        st.subheader("Selección por Coordinación")
-        buckets = {k: [] for k in ["COORD_TERAPIAS", "COORD_MEDICINA", "COORD_CIRUGIA", "COORD_GINECOLOGIA", "COORD_PEDIATRIA", "COORD_MODULARES", "OTRAS_ESPECIALIDADES"]}
+        # --- ORGANIZACIÓN DE MENÚS (BUCKETS) ---
+        buckets = {k: [] for k in ["COORD_TERAPIAS", "COORD_MEDICINA", "COORD_CIRUGIA", "COORD_MODULARES", "COORD_PEDIATRIA", "COORD_GINECOLOGIA", "OTRAS_ESPECIALIDADES"]}
         
-        for e in sorted(lista_esp_detectadas):
+        for e in sorted(especialidades_encontradas):
             cat = clasificar_especialidad(e)
             buckets[cat].append(e)
 
-        seleccion_final = []
+        st.markdown("### Selecciona las áreas para el reporte")
+        
+        # Generar columnas para las coordinaciones
+        seleccion_usuario = []
         cols = st.columns(3)
-        for idx, (cat_name, items) in enumerate(buckets.items()):
-            if not items: continue
+        
+        # Iteramos sobre todas las coordinaciones, incluso si están vacías no las mostramos
+        for idx, (cat_name, lista_servicios) in enumerate(buckets.items()):
+            if not lista_servicios: continue
+            
             with cols[idx % 3]:
-                with st.expander(f"📦 {cat_name}", expanded=True):
-                    todo = st.checkbox(f"Seleccionar todo {cat_name}", key=cat_name)
-                    for it in items:
-                        if st.checkbox(it, value=todo, key=it):
-                            seleccion_final.append(it)
+                with st.expander(f"📁 {cat_name.replace('_', ' ')}", expanded=True):
+                    todo = st.checkbox(f"Toda la {cat_name}", key=f"all_{cat_name}")
+                    for s in lista_servicios:
+                        if st.checkbox(s, value=todo, key=f"chk_{s}"):
+                            seleccion_usuario.append(s)
 
-        # 3. PROCESAR EXCEL
-        if st.button("🚀 Generar Excel para Coordinación", use_container_width=True):
-            if not seleccion_final:
-                st.warning("Selecciona al menos una especialidad.")
+        # --- GENERACIÓN DE EXCEL ---
+        if st.button("📥 Generar Excel Seleccionado", use_container_width=True):
+            if not seleccion_usuario:
+                st.error("Por favor selecciona al menos un servicio.")
             else:
-                datos = []
-                fecha_reporte_obj = datetime.now()
+                fecha_hoy = datetime.now()
+                datos_finales = []
                 
-                # RECORRIDO COMPLETO IGUAL AL ORIGINAL
-                esp_actual_html = ""
-                for _, row in df_completo.iterrows():
-                    celda_0 = str(row.iloc[0]).strip().upper()
-                    if "ESPECIALIDAD:" in celda_0:
-                        esp_actual_html = celda_0
-                        continue
-                    
-                    f = [str(x).strip() for x in row.values]
-                    t = " ".join(f).upper()
-                    if any(x in t for x in IGNORAR): continue
-                    
-                    cama, reg = f[0], f[1]
-                    if "1111" in cama or "CAMA" in cama or len(reg) < 5: continue
-                    
-                    esp_real = obtener_especialidad_real(cama, esp_actual_html)
-                    
-                    if esp_real in seleccion_final:
+                for p in pacs_detectados:
+                    if p["esp_real"] in seleccion_usuario:
                         # Cálculo de estancia
                         try:
-                            fecha_ing_obj = datetime.strptime(f[9], "%d/%m/%Y")
-                            dias = (datetime(fecha_reporte_obj.year, fecha_reporte_obj.month, fecha_reporte_obj.day) - 
-                                    datetime(fecha_ing_obj.year, fecha_ing_obj.month, fecha_ing_obj.day)).days + 1
-                        except: dias = "Rev. Fecha"
+                            f_ing = datetime.strptime(p["ingreso"], "%d/%m/%Y")
+                            dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - 
+                                    datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
+                        except: dias = "Revisar"
 
-                        datos.append({
-                            "FECHA_REPORTE": fecha_reporte_obj.strftime("%d/%m/%Y"),
-                            "ESPECIALIDAD": esp_real,
-                            "CAMA": cama, "REGISTRO": reg, "PACIENTE": f[2],
-                            "SEXO": f[3], "EDAD": "".join(re.findall(r'\d+', f[4])),
-                            "DIAGNOSTICO": f[6], "FECHA_INGRESO": f[9], "DIAS_ESTANCIA": dias
+                        datos_finales.append({
+                            "FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"),
+                            "ESPECIALIDAD": p["esp_real"],
+                            "CAMA": p["cama"], "REGISTRO": p["registro"],
+                            "PACIENTE": p["paciente"], "SEXO": p["sexo"],
+                            "EDAD": p["edad"], "DIAGNOSTICO": p["diag"],
+                            "FECHA_INGRESO": p["ingreso"], "DIAS_ESTANCIA": dias
                         })
 
-                # Crear el archivo Excel
-                output = BytesIO()
-                df_final = pd.DataFrame(datos)
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df_final.to_excel(writer, index=False, sheet_name='Censo')
+                if datos_finales:
+                    df_out = pd.DataFrame(datos_finales)
+                    output = BytesIO()
                     
-                # Formateo de tabla (Openpyxl)
-                output.seek(0)
-                wb = load_workbook(output)
-                ws = wb.active
-                if len(datos) > 0:
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_out.to_excel(writer, index=False, sheet_name='Epidemiologia')
+                        
+                    # Formato Excel
+                    output.seek(0)
+                    wb = load_workbook(output)
+                    ws = wb.active
                     ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, 
                                        tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
+                    
                     for col in ws.columns:
-                        ws.column_dimensions[get_column_letter(col[0].column)].width = 20
-                
-                final_output = BytesIO()
-                wb.save(final_output)
-                
-                st.success("✅ Excel generado con éxito")
-                st.download_button(
-                    label="📥 Descargar Reporte Epidemiológico",
-                    data=final_output.getvalue(),
-                    file_name=f"Censo_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                        ws.column_dimensions[get_column_letter(col[0].column)].width = 22
+                    
+                    final_io = BytesIO()
+                    wb.save(final_io)
+                    
+                    st.success(f"Reporte listo con {len(datos_finales)} pacientes.")
+                    st.download_button(
+                        "Descargar Archivo Excel",
+                        data=final_io.getvalue(),
+                        file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                else:
+                    st.warning("No hay datos para la selección actual.")
 
     except Exception as e:
-        st.error(f"Hubo un error procesando el archivo: {e}")
+        st.error(f"Error crítico: {e}")
