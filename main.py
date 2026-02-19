@@ -29,6 +29,17 @@ VINCULO_AUTO_INCLUSION = {
     "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
 
+# MAPA DE COLORES PARA LA INTERFAZ
+COLORES_INTERFAZ = {
+    "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B",  # Rojo
+    "COORD_PEDIATRIA": "#5DADE2",           # Azul claro
+    "COORD_MEDICINA": "#1B4F72",            # Azul fuerte
+    "COORD_GINECOLOGIA": "#F06292",         # Rosa
+    "COORD_MODULARES": "#E67E22",           # Naranja
+    "OTRAS_ESPECIALIDADES": "#2C3E50",      # Gris fuerte
+    "COORD_CIRUGIA": "#117864"              # Verde (default)
+}
+
 CATALOGO = {
     "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "PSIQ", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
@@ -37,7 +48,7 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
-# --- LÓGICA DE CLASIFICACIÓN ---
+# --- FUNCIONES DE LÓGICA ---
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -89,24 +100,20 @@ if archivo:
 
         st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
 
-        # --- BUCKETS EXCLUYENTES (CORREGIDO PARA NEONATOLOGÍA) ---
+        # --- CONSTRUCCIÓN DE BUCKETS EXCLUYENTES ---
         buckets = {}
         asignadas = set()
 
-        # 1. Bucket Terapias
         terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
         if terapias_list:
             buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
             asignadas.update(terapias_list)
 
-        # 2. Bucket Pediatría (Captura Neonatología explícitamente)
-        ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and 
-                          ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
+        ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
         if ped_list:
             buckets["COORD_PEDIATRIA"] = ped_list
             asignadas.update(ped_list)
 
-        # 3. Resto de Coordinaciones
         for cat, kws in CATALOGO.items():
             if cat == "COORD_PEDIATRIA": continue
             found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
@@ -114,16 +121,17 @@ if archivo:
                 buckets[cat] = found
                 asignadas.update(found)
 
-        # 4. Otras
         otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
         if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
-        # --- RENDERIZADO ---
+        # --- RENDERIZADO CON COLORES ---
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             with cols[idx % 3]:
-                header_style = "background-color:#C0392B; padding:5px; border-radius:5px; color:white;" if "TERAPIA" in cat_name else "color:inherit;"
-                st.markdown(f'<div style="{header_style}"><b>{cat_name.replace("COORD_", "")}</b></div>', unsafe_allow_html=True)
+                # Aplicamos el color solicitado
+                color = COLORES_INTERFAZ.get(cat_name, "#5D6D7E")
+                
+                st.markdown(f'<div style="background-color:{color}; padding:8px; border-radius:5px 5px 0px 0px; color:white; text-align:center;"><b>{cat_name.replace("COORD_", "")}</b></div>', unsafe_allow_html=True)
                 with st.container(border=True):
                     st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
                     for s in servicios:
@@ -131,15 +139,14 @@ if archivo:
 
         st.write("---")
 
-        # --- GENERAR EXCEL ---
+        # --- PROCESAMIENTO EXCEL ---
         if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
             especialidades_finales = set()
             for c_name, servs in buckets.items():
-                if st.session_state.get(f"master_{c_name}"):
-                    # Auto-inclusión de terapias si se marca el maestro de una coordinación
-                    if c_name in VINCULO_AUTO_INCLUSION:
-                        for t in VINCULO_AUTO_INCLUSION[c_name]:
-                            if t in especialidades_encontradas: especialidades_finales.add(t)
+                master_marcado = st.session_state.get(f"master_{c_name}")
+                if master_marcado and c_name in VINCULO_AUTO_INCLUSION:
+                    for t in VINCULO_AUTO_INCLUSION[c_name]:
+                        if t in especialidades_encontradas: especialidades_finales.add(t)
                 for s in servs:
                     if st.session_state.get(f"serv_{c_name}_{s}"): especialidades_finales.add(s)
 
