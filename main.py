@@ -4,15 +4,20 @@ import re
 from io import BytesIO
 from datetime import datetime, timedelta
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Font
-from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.styles import Alignment, Font, Border, Side
 from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# --- REGLAS DE NEGOCIO Y FILTROS ---
-ORDEN_TERAPIAS_STRICTO = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
+# --- REGLAS DE NEGOCIO ---
+SERVICIOS_INSUMOS_FILTRO = [
+    "ONCOLOGÍA PEDIATRICA", "NEONATOLOGIA", "INFECTOTOLOGIA PEDIATRICA", 
+    "U.C.I.N.", "U.T.I.P.", "TERAPIA POSQUIRURGICA", 
+    "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
+]
+
+ORDEN_TERAPIAS_EXCEL = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
 
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
@@ -26,12 +31,6 @@ VINCULO_AUTO_INCLUSION = {
     "COORD_MODULARES": ["UNIDAD CORONARIA"],
     "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
-
-SERVICIOS_INSUMOS_FILTRO = [
-    "ONCOLOGÍA PEDIATRICA", "NEONATOLOGIA", "INFECTOTOLOGIA PEDIATRICA", 
-    "U.C.I.N.", "U.T.I.P.", "TERAPIA POSQUIRURGICA", 
-    "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
-]
 
 COLORES_INTERFAZ = {
     "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B", "COORD_PEDIATRIA": "#5DADE2",
@@ -54,15 +53,6 @@ def get_monday_dates():
     lunes_siguiente = lunes_actual + timedelta(days=7)
     return lunes_actual.strftime("%d/%m/%Y"), lunes_siguiente.strftime("%d/%m/%Y")
 
-def clasificar_especialidad(nombre_esp):
-    n = nombre_esp.upper()
-    if n in MAPA_TERAPIAS: return "COORD_TERAPIAS"
-    if "PEDIATRI" in n or "PEDIATRICA" in n or "NEONATO" in n or "NEONATOLOGIA" in n: return "COORD_PEDIATRIA"
-    for c, kws in CATALOGO.items():
-        if c == "COORD_PEDIATRIA": continue
-        if any(kw in n for kw in kws): return c
-    return "OTRAS_ESPECIALIDADES"
-
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -80,17 +70,18 @@ def sync_group(cat_name, servicios):
     for s in servicios:
         st.session_state[f"serv_{cat_name}_{s}"] = master_val
 
-# --- SIDEBAR (MENÚ) ---
+# --- SIDEBAR ---
 with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/b/b3/ISSSTE_logo.png", width=150)
     st.title("EpidemioManager")
     st.write("---")
     menu_opcion = st.radio("Módulos:", ["📋 Censo Diario", "📦 Censo de Insumos"], index=0)
     st.write("---")
-    st.caption("CMN 20 de Noviembre\nResidencia de Epidemiología")
+    st.caption(f"Carlos | Residente de Epidemiología\nCMN 20 de Noviembre")
 
 # --- CARGA GLOBAL ---
 st.header(menu_opcion)
-archivo = st.file_uploader("Cargar Censo HTML", type=["html", "htm"])
+archivo = st.file_uploader("📂 Cargar archivo HTML del censo", type=["html", "htm"])
 
 if archivo:
     try:
@@ -113,15 +104,14 @@ if archivo:
                 esp_real = obtener_especialidad_real(fila[0], esp_actual_temp)
                 especialidades_encontradas.add(esp_real)
                 pacs_detectados.append({
-                    "CAMA": fila[0], "REG": fila[1], "PAC": fila[2], "SEXO": fila[3], 
-                    "EDAD": "".join(re.findall(r'\d+', fila[4])), "DIAG": fila[6], 
-                    "ING": fila[9], "esp_real": esp_real
+                    "CAMA": fila[0], "REGISTRO": fila[1], "PACIENTE": fila[2], "SEXO": fila[3], 
+                    "EDAD": "".join(re.findall(r'\d+', fila[4])), "DIAGNOSTICO": fila[6], 
+                    "FECHA DE INGRESO": fila[9], "esp_real": esp_real
                 })
 
-        # --- LÓGICA DE MÓDULOS ---
+        # --- MÓDULO 1: CENSO DIARIO ---
         if menu_opcion == "📋 Censo Diario":
-            st.subheader(f"Análisis de Censo: {len(pacs_detectados)} pacientes")
-            
+            st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
             buckets = {}
             asignadas = set()
             terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
@@ -129,7 +119,6 @@ if archivo:
                 buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
                 asignadas.update(terapias_list)
             
-            # Pediatría con prioridad
             ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
             if ped_list:
                 buckets["COORD_PEDIATRIA"] = ped_list
@@ -152,7 +141,7 @@ if archivo:
                         for s in servicios:
                             st.checkbox(s, key=f"serv_{cat_name}_{s}")
 
-            if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
+            if st.button("🚀 GENERAR EXCEL GENERAL", use_container_width=True, type="primary"):
                 especialidades_finales = set()
                 for c_name, servs in buckets.items():
                     if st.session_state.get(f"master_{c_name}"):
@@ -167,41 +156,31 @@ if archivo:
                     datos_excel = []
                     for p in pacs_detectados:
                         if p["esp_real"] in especialidades_finales:
-                            try:
-                                f_ing = datetime.strptime(p["ING"], "%d/%m/%Y")
-                                dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
-                            except: dias = "Rev."
-                            datos_excel.append({"FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"), "ESPECIALIDAD": p["esp_real"], "CAMA": p["CAMA"], "REGISTRO": p["REG"], "PACIENTE": p["PAC"], "SEXO": p["SEXO"], "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAG"], "FECHA_INGRESO": p["ING"], "DIAS_ESTANCIA": dias})
+                            datos_excel.append({"FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"), "ESPECIALIDAD": p["esp_real"], "CAMA": p["CAMA"], "REGISTRO": p["REGISTRO"], "PACIENTE": p["PACIENTE"], "SEXO": p["SEXO"], "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAGNOSTICO"], "FECHA_INGRESO": p["FECHA DE INGRESO"]})
 
                     df_out = pd.DataFrame(datos_excel)
-                    otros_servs = sorted([s for s in list(especialidades_finales) if s not in ORDEN_TERAPIAS_STRICTO])
-                    mapeo_orden = ORDEN_TERAPIAS_STRICTO + otros_servs
-                    df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden, ordered=True)
-                    df_out = df_out.sort_values(['ESPECIALIDAD', 'CAMA'])
-
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_out.to_excel(writer, index=False)
-                    
-                    st.download_button(label="💾 DESCARGAR EXCEL", data=output.getvalue(), file_name=f"Censo_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    st.download_button(label="💾 DESCARGAR EXCEL", data=output.getvalue(), file_name=f"Censo_Gral_{fecha_hoy.strftime('%d%m%Y')}.xlsx", use_container_width=True)
 
+        # --- MÓDULO 2: CENSO DE INSUMOS ---
         elif menu_opcion == "📦 Censo de Insumos":
-            st.subheader("Filtro de Insumos Críticos")
-            
             pacs_insumos = [p for p in pacs_detectados if p["esp_real"] in SERVICIOS_INSUMOS_FILTRO]
             servicios_en_insumos = sorted(list(set([p["esp_real"] for p in pacs_insumos])))
 
             if not pacs_insumos:
-                st.warning("No se detectaron pacientes en los servicios críticos para insumos.")
+                st.warning("⚠️ No se detectaron pacientes en los servicios críticos para insumos.")
             else:
+                st.subheader(f"Vista Previa de Datos ({len(pacs_insumos)} pacientes)")
                 for serv in servicios_en_insumos:
-                    with st.expander(f"Previsualización: {serv}", expanded=False):
+                    with st.expander(f"🔍 Previsualización: {serv}", expanded=False):
                         df_preview = pd.DataFrame([p for p in pacs_insumos if p["esp_real"] == serv])
                         df_preview["TIPO DE PRECAUCIONES"] = df_preview["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
                         df_preview["INSUMO"] = "JABÓN/SANITAS"
-                        st.table(df_preview[["CAMA", "REG", "PAC", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES", "INSUMO"]])
+                        st.table(df_preview[["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]])
 
-                if st.button("🚀 GENERAR EXCEL DE INSUMOS", use_container_width=True, type="primary"):
+                if st.button("🚀 GENERAR EXCEL DE INSUMOS (NOM-045)", use_container_width=True, type="primary"):
                     lunes_ini, lunes_fin = get_monday_dates()
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -211,28 +190,50 @@ if archivo:
                             df_serv["TIPO DE PRECAUCIONES"] = df_serv["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if x == "ONCOLOGIA MEDICA" else "ESTÁNDAR")
                             df_serv["INSUMO"] = "JABÓN/SANITAS"
                             
-                            cols_finales = ["CAMA", "REG", "PAC", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES", "INSUMO"]
+                            cols_finales = ["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]
                             df_final = df_serv[cols_finales]
-                            df_final.columns = ["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]
                             
                             sheet_name = serv[:30].replace("/", "-")
-                            df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=2)
+                            df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                             
                             ws = writer.sheets[sheet_name]
+                            
+                            # 1. ENCABEZADO SUPERIOR (Fila 1)
                             header_text = f"{serv} VIGENCIA DEL {lunes_ini} AL {lunes_fin} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
                             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cols_finales))
                             cell_h = ws.cell(row=1, column=1, value=header_text)
-                            cell_h.alignment = Alignment(horizontal="center")
-                            cell_h.font = Font(bold=True)
+                            cell_h.alignment = Alignment(horizontal="center", vertical="center")
+                            cell_h.font = Font(bold=True, size=11)
 
-                            last_row = ws.max_row
-                            ws.merge_cells(start_row=last_row + 2, start_column=1, end_row=last_row + 2, end_column=len(cols_finales))
-                            cell_f1 = ws.cell(row=last_row + 2, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
-                            cell_f1.alignment = Alignment(horizontal="center")
+                            # 2. ESTILO DE DATOS Y AUTOAJUSTE
+                            for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(cols_finales)):
+                                for cell in row:
+                                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                            
+                            # 3. PIES DE PÁGINA (Seguidos sin saltos)
+                            last_data_row = ws.max_row
+                            # NOM-045 (Fila inmediata)
+                            ws.merge_cells(start_row=last_data_row + 1, start_column=1, end_row=last_data_row + 1, end_column=len(cols_finales))
+                            cell_f1 = ws.cell(row=last_data_row + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
+                            cell_f1.alignment = Alignment(horizontal="center", vertical="center")
                             cell_f1.font = Font(size=9, italic=True)
-                            ws.cell(row=last_row + 4, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS")
 
-                    st.download_button("💾 DESCARGAR REPORTE", data=output.getvalue(), file_name=f"Insumos_{datetime.now().strftime('%d%m%Y')}.xlsx")
+                            # Autorizó (Fila inmediata)
+                            ws.cell(row=last_data_row + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS")
+                            ws.cell(row=last_data_row + 2, column=1).font = Font(bold=True)
+                            
+                            # 4. AUTO-AJUSTE DE COLUMNAS
+                            for i, col_name in enumerate(cols_finales):
+                                column_letter = get_column_letter(i + 1)
+                                max_length = len(col_name)
+                                for row in ws.iter_rows(min_col=i+1, max_col=i+1):
+                                    for cell in row:
+                                        if cell.value:
+                                            max_length = max(max_length, len(str(cell.value)))
+                                ws.column_dimensions[column_letter].width = max_length + 5
+
+                    st.success("✅ Censo de Insumos generado.")
+                    st.download_button("💾 DESCARGAR REPORTE", data=output.getvalue(), file_name=f"Insumos_{datetime.now().strftime('%d%m%Y')}.xlsx", use_container_width=True)
 
     except Exception as e:
         st.error(f"Error: {e}")
