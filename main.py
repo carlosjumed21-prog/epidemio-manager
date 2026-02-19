@@ -42,7 +42,7 @@ CATALOGO = {
 }
 
 SERVICIOS_INSUMOS_FILTRO = [
-    "HEMATOLOGIA", "HEMATOLOGÍA PEDIÁTRICA", "ONCOLOGÍA PEDIATRICA",
+    "HEMATOLOGÍA", "HEMATOLOGÍA PEDIÁTRICA", "ONCOLOGÍA PEDIATRICA",
     "NEONATOLOGIA", "INFECTOLOGIA PEDIATRICA", "U.C.I.N.", "U.T.I.P.",
     "TERAPIA POSQUIRURGICA", "UNIDAD DE QUEMADOS", "ONCOLOGIA MEDICA", "UCIA"
 ]
@@ -105,7 +105,6 @@ if archivo:
         if menu_opcion == "📋 Censo Diario":
             buckets = {}
             asignadas = set()
-            
             terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
             if terapias_list: buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list; asignadas.update(terapias_list)
             
@@ -129,7 +128,6 @@ if archivo:
                         st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
                         for s in servicios: st.checkbox(s, key=f"serv_{cat_name}_{s}")
 
-            # RESTAURADO: BOTÓN GENERAR EXCEL GENERAL
             if st.button("🚀 GENERAR EXCEL GENERAL", use_container_width=True, type="primary"):
                 especialidades_finales = set()
                 for c_name, servs in buckets.items():
@@ -160,8 +158,15 @@ if archivo:
                     wb = load_workbook(output)
                     ws = wb.active
                     ws.add_table(Table(displayName="CensoGral", ref=ws.dimensions, tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
+                    
+                    # AUTOAJUSTE RESTAURADO PARA CENSO DIARIO
                     for col in ws.columns:
-                        ws.column_dimensions[get_column_letter(col[0].column)].width = 25
+                        max_length = 0
+                        column = col[0].column_letter
+                        for cell in col:
+                            if cell.value:
+                                max_length = max(max_length, len(str(cell.value)))
+                        ws.column_dimensions[column].width = max_length + 4
                     
                     st.download_button(label="💾 DESCARGAR EXCEL GENERAL", data=output.getvalue(), file_name=f"Censo_Gral_{datetime.now().strftime('%d%m%Y')}.xlsx", use_container_width=True)
 
@@ -195,22 +200,20 @@ if archivo:
                             df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                             ws = writer.sheets[sheet_name]
                             
-                            # TÍTULO (FECHAS CORREGIDAS)
-                            header = f"{serv} DEL {f_hoy} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)"
                             ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
-                            cell_h = ws.cell(row=1, column=1, value=header)
+                            cell_h = ws.cell(row=1, column=1, value=f"{serv} DEL {f_hoy} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)")
                             cell_h.alignment = Alignment(horizontal="center", vertical="center"); cell_h.font = Font(bold=True)
 
-                            # PIE DE PÁGINA (NOM-045)
                             lr = ws.max_row
                             ws.merge_cells(start_row=lr + 1, start_column=1, end_row=lr + 1, end_column=8)
                             cell_f = ws.cell(row=lr + 1, column=1, value="Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO.")
                             cell_f.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                             cell_f.font = Font(size=9, italic=True)
                             ws.row_dimensions[lr + 1].height = 55 
+
                             ws.cell(row=lr + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS").font = Font(bold=True)
                             
-                            # AUTO-AJUSTE
+                            # AUTO-AJUSTE PARA INSUMOS
                             for i, col_name in enumerate(df_final.columns):
                                 L = get_column_letter(i + 1)
                                 m_len = len(col_name)
@@ -220,6 +223,6 @@ if archivo:
                                         if c.value: m_len = max(m_len, len(str(c.value)))
                                 ws.column_dimensions[L].width = m_len + 4
 
-                    st.download_button(label="💾 DESCARGAR INSUMOS", data=output.getvalue(), file_name=f"Insumos_{f_hoy.replace('/','-')}.xlsx", use_container_width=True)
+                    st.download_button(label="💾 DESCARGAR", data=output.getvalue(), file_name=f"Insumos_{f_hoy.replace('/','-')}.xlsx", use_container_width=True)
     except Exception as e:
         st.error(f"Error: {e}")
