@@ -7,10 +7,10 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# --- REGLAS DE NEGOCIO ESTRICTAS ---
+# --- REGLAS DE NEGOCIO ESTRICTAS (CMN 20 DE NOVIEMBRE) ---
 ORDEN_TERAPIAS_STRICTO = [
     "UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", 
     "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"
@@ -22,7 +22,7 @@ MAPA_TERAPIAS = {
     "UNIDAD DE QUEMADOS": "COORD_CIRUGIA", "UCIA": "COORD_MEDICINA"
 }
 
-# Relación para la auto-inclusión en el Excel
+# Auto-inclusión en Excel si se selecciona "Todo" en la coordinación
 VINCULO_COORD_TERAPIA = {
     "COORD_MEDICINA": ["UCIA", "TERAPIA POSQUIRURGICA"],
     "COORD_CIRUGIA": ["UNIDAD DE QUEMADOS"],
@@ -30,18 +30,22 @@ VINCULO_COORD_TERAPIA = {
     "COORD_PEDIATRIA": ["U.C.I.N.", "U.T.I.P."]
 }
 
+# Catálogo corregido: MEDICINA INTERNA PEDIÁTRICA eliminada de Medicina
 CATALOGO = {
     "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "PSIQ", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
     "COORD_MODULARES": ["ANGIOLOGIA", "VASCULAR", "CARDIOLOGIA", "CARDIOVASCULAR", "TORAX", "NEUMO", "HEMATO", "NEUROCIRUGIA", "NEUROLOGIA", "ONCOLOGIA", "CORONARIA", "UNIDAD CORONARIA"],
-    "COORD_PEDIATRIA": ["PEDIATRI", "PEDIATRICA", "NEONATO", "NEONATOLOGIA", "CUNERO", "UTIP", "U.T.I.P", "UCIN", "U.C.I.N", "MEDICINA INTERNA PEDIATRICA (5-4)"],
+    "COORD_PEDIATRIA": ["PEDIATRI", "PEDIATRICA", "NEONATO", "NEONATOLOGIA", "CUNERO", "UTIP", "U.T.I.P", "UCIN", "U.C.I.N"],
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
 def clasificar_especialidad(nombre_esp):
     n = nombre_esp.upper()
+    # 1. Terapias siempre primero
     if n in MAPA_TERAPIAS: return "COORD_TERAPIAS"
+    # 2. Prioridad Pediatría para evitar conflicto con Medicina Interna
     if "PEDIATRICA" in n or "PEDIATRI" in n: return "COORD_PEDIATRIA"
+    # 3. Resto del catálogo
     for c, kws in CATALOGO.items():
         if any(kw in n for kw in kws): return c
     return "OTRAS_ESPECIALIDADES"
@@ -100,7 +104,7 @@ if archivo:
         st.write("---")
         st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
 
-        # --- SELECCIÓN ---
+        # --- BUCKETS VISUALES ---
         buckets = {"⚠️ UNIDADES DE TERAPIA ⚠️": [e for e in especialidades_encontradas if e in MAPA_TERAPIAS]}
         for cat, items in CATALOGO.items():
             found = [e for e in especialidades_encontradas if any(kw in e for kw in items) and e not in MAPA_TERAPIAS]
@@ -118,19 +122,17 @@ if archivo:
 
         st.write("---")
 
-        if st.button("🚀 GENERAR EXCEL GRUPAL", use_container_width=True, type="primary"):
-            # LÓGICA DE FILTRADO FINAL CON AUTO-INCLUSIÓN
+        if st.button("🚀 GENERAR EXCEL EPIDEMIOLÓGICO", use_container_width=True, type="primary"):
             especialidades_a_incluir = set()
             for c_name, servs in buckets.items():
                 master_val = st.session_state.get(f"master_{c_name}")
                 
-                # Regla: Si marcó todo de una coordinación, incluimos sus terapias
+                # Regla de auto-inclusión de Terapias si se selecciona "Todo" en la coordinación
                 if master_val and c_name in VINCULO_COORD_TERAPIA:
                     for t in VINCULO_COORD_TERAPIA[c_name]:
                         if t in especialidades_encontradas:
                             especialidades_a_incluir.add(t)
                 
-                # Inclusión normal por check individual
                 for s in servs:
                     if st.session_state.get(f"serv_{c_name}_{s}"):
                         especialidades_a_incluir.add(s)
@@ -160,14 +162,12 @@ if archivo:
                 if datos_finales:
                     df_out = pd.DataFrame(datos_finales)
                     
-                    # --- ORDENAMIENTO ESTRICTO ---
-                    # 1. Definimos el orden: Primero Terapias (según tu lista) y luego el resto alfabético
-                    lista_final_seleccionada = list(especialidades_a_incluir)
-                    otros_servicios = sorted([s for s in lista_final_seleccionada if s not in ORDEN_TERAPIAS_STRICTO])
-                    mapeo_orden_completo = ORDEN_TERAPIAS_STRICTO + otros_servicios
+                    # --- ORDENAMIENTO ESTRICTO DE TERAPIAS ---
+                    lista_actual = list(especialidades_a_incluir)
+                    otros_servs = sorted([s for s in lista_actual if s not in ORDEN_TERAPIAS_STRICTO])
+                    mapeo_orden = ORDEN_TERAPIAS_STRICTO + otros_servs
                     
-                    # 2. Aplicamos el orden categórico
-                    df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden_completo, ordered=True)
+                    df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden, ordered=True)
                     df_out = df_out.sort_values(['ESPECIALIDAD', 'CAMA'])
 
                     output = BytesIO()
@@ -186,7 +186,7 @@ if archivo:
                     final_io = BytesIO()
                     wb.save(final_io)
                     
-                    st.success(f"✅ Excel generado correctamente.")
+                    st.success(f"✅ Reporte generado.")
                     st.download_button(
                         label="💾 DESCARGAR EXCEL",
                         data=final_io.getvalue(),
@@ -195,7 +195,7 @@ if archivo:
                         use_container_width=True
                     )
                 else:
-                    st.error("No se encontraron pacientes para esta selección.")
+                    st.error("No hay pacientes para esta selección.")
 
     except Exception as e:
         st.error(f"Error crítico: {e}")
