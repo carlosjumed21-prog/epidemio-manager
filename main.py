@@ -7,14 +7,11 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
 
-# --- REGLAS DE NEGOCIO ESTRICTAS ---
-ORDEN_TERAPIAS_EXCEL = [
-    "UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", 
-    "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"
-]
+# --- REGLAS DE NEGOCIO (Respetando tus filtros del 20 de Noviembre) ---
+ORDEN_TERAPIAS_EXCEL = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
 
 MAPA_TERAPIAS = {
     "UNIDAD CORONARIA": "COORD_MODULARES", "U.C.I.N.": "COORD_PEDIATRIA",
@@ -30,7 +27,7 @@ VINCULO_AUTO_INCLUSION = {
 }
 
 COLORES_INTERFAZ = {
-    "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B",  # Rojo
+    "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B", # Rojo
     "COORD_PEDIATRIA": "#5DADE2",           # Azul claro
     "COORD_MEDICINA": "#1B4F72",            # Azul fuerte
     "COORD_GINECOLOGIA": "#F06292",         # Rosa
@@ -39,7 +36,6 @@ COLORES_INTERFAZ = {
     "COORD_CIRUGIA": "#117864"              # Verde
 }
 
-# CATALOGO AJUSTADO: PSIQUIATRIA MOVIDA A MODULARES
 CATALOGO = {
     "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
@@ -48,7 +44,7 @@ CATALOGO = {
     "COORD_GINECOLOGIA": ["GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"]
 }
 
-# --- LÓGICA DE CLASIFICACIÓN ---
+# --- FUNCIONES DE LÓGICA ---
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -66,11 +62,20 @@ def sync_group(cat_name, servicios):
     for s in servicios:
         st.session_state[f"serv_{cat_name}_{s}"] = master_val
 
-# --- INTERFAZ ---
-st.title("🏥 EpidemioManager - ISSSTE")
-st.caption("Residencia de Epidemiología - CMN 20 de Noviembre")
+# --- SIDEBAR (EL MENÚ QUE FALTABA) ---
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/b/b3/ISSSTE_logo.png", width=150)
+    st.title("EpidemioManager")
+    st.write("---")
+    # Estas son las "pestañas" en formato de menú lateral
+    menu_opcion = st.radio("Seleccione un Módulo:", ["📋 Censo Diario", "📦 Censo de Insumos"], index=0)
+    st.write("---")
+    st.caption("CMN 20 de Noviembre\nResidencia de Epidemiología")
 
-archivo = st.file_uploader("Subir Censo HTML", type=["html", "htm"])
+# --- CONTENIDO PRINCIPAL ---
+st.header(menu_opcion)
+
+archivo = st.file_uploader("Subir archivo HTML del censo", type=["html", "htm"])
 
 if archivo:
     try:
@@ -98,74 +103,66 @@ if archivo:
                     "ING": fila[9], "esp_real": esp_real
                 })
 
-        st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
+        # --- MÓDULO 1: CENSO DIARIO ---
+        if menu_opcion == "📋 Censo Diario":
+            st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
+            
+            buckets = {}
+            asignadas = set()
 
-        # --- BUCKETS EXCLUYENTES ---
-        buckets = {}
-        asignadas = set()
+            terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
+            if terapias_list:
+                buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
+                asignadas.update(terapias_list)
 
-        # 1. Bucket Terapias
-        terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
-        if terapias_list:
-            buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
-            asignadas.update(terapias_list)
+            ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
+            if ped_list:
+                buckets["COORD_PEDIATRIA"] = ped_list
+                asignadas.update(ped_list)
 
-        # 2. Bucket Pediatría
-        ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and ("PEDIATRI" in e or "PEDIATRICA" in e or "NEONATO" in e or "NEONATOLOGIA" in e)])
-        if ped_list:
-            buckets["COORD_PEDIATRIA"] = ped_list
-            asignadas.update(ped_list)
+            for cat, kws in CATALOGO.items():
+                if cat == "COORD_PEDIATRIA": continue
+                found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
+                if found:
+                    buckets[cat] = found
+                    asignadas.update(found)
 
-        # 3. Resto de Coordinaciones (Incluye Psiquiatría en Modulares)
-        for cat, kws in CATALOGO.items():
-            if cat == "COORD_PEDIATRIA": continue
-            found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
-            if found:
-                buckets[cat] = found
-                asignadas.update(found)
+            otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
+            if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
-        # 4. Otras
-        otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
-        if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
+            cols = st.columns(3)
+            for idx, (cat_name, servicios) in enumerate(buckets.items()):
+                with cols[idx % 3]:
+                    color = COLORES_INTERFAZ.get(cat_name, "#5D6D7E")
+                    st.markdown(f'<div style="background-color:{color}; padding:8px; border-radius:5px 5px 0px 0px; color:white; text-align:center;"><b>{cat_name.replace("COORD_", "")}</b></div>', unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
+                        for s in servicios:
+                            st.checkbox(s, key=f"serv_{cat_name}_{s}")
 
-        # --- RENDERIZADO ---
-        cols = st.columns(3)
-        for idx, (cat_name, servicios) in enumerate(buckets.items()):
-            with cols[idx % 3]:
-                color = COLORES_INTERFAZ.get(cat_name, "#5D6D7E")
-                st.markdown(f'<div style="background-color:{color}; padding:8px; border-radius:5px 5px 0px 0px; color:white; text-align:center;"><b>{cat_name.replace("COORD_", "")}</b></div>', unsafe_allow_html=True)
-                with st.container(border=True):
-                    st.checkbox(f"Seleccionar todo", key=f"master_{cat_name}", on_change=sync_group, args=(cat_name, servicios))
-                    for s in servicios:
-                        st.checkbox(s, key=f"serv_{cat_name}_{s}")
-
-        st.write("---")
-
-        # --- GENERAR EXCEL ---
-        if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
-            especialidades_finales = set()
-            for c_name, servs in buckets.items():
-                if st.session_state.get(f"master_{c_name}"):
-                    if c_name in VINCULO_AUTO_INCLUSION:
+            if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
+                especialidades_finales = set()
+                for c_name, servs in buckets.items():
+                    master_marcado = st.session_state.get(f"master_{c_name}")
+                    if master_marcado and c_name in VINCULO_AUTO_INCLUSION:
                         for t in VINCULO_AUTO_INCLUSION[c_name]:
                             if t in especialidades_encontradas: especialidades_finales.add(t)
-                for s in servs:
-                    if st.session_state.get(f"serv_{c_name}_{s}"): especialidades_finales.add(s)
+                    for s in servs:
+                        if st.session_state.get(f"serv_{c_name}_{s}"): especialidades_finales.add(s)
 
-            if not especialidades_finales:
-                st.warning("⚠️ Selecciona un servicio.")
-            else:
-                fecha_hoy = datetime.now()
-                datos_excel = []
-                for p in pacs_detectados:
-                    if p["esp_real"] in especialidades_finales:
-                        try:
-                            f_ing = datetime.strptime(p["ING"], "%d/%m/%Y")
-                            dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
-                        except: dias = "Rev."
-                        datos_excel.append({"FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"), "ESPECIALIDAD": p["esp_real"], "CAMA": p["CAMA"], "REGISTRO": p["REG"], "PACIENTE": p["PAC"], "SEXO": p["SEXO"], "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAG"], "FECHA_INGRESO": p["ING"], "DIAS_ESTANCIA": dias})
+                if not especialidades_finales:
+                    st.warning("⚠️ Selecciona un servicio.")
+                else:
+                    fecha_hoy = datetime.now()
+                    datos_excel = []
+                    for p in pacs_detectados:
+                        if p["esp_real"] in especialidades_finales:
+                            try:
+                                f_ing = datetime.strptime(p["ING"], "%d/%m/%Y")
+                                dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
+                            except: dias = "Rev."
+                            datos_excel.append({"FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"), "ESPECIALIDAD": p["esp_real"], "CAMA": p["CAMA"], "REGISTRO": p["REG"], "PACIENTE": p["PAC"], "SEXO": p["SEXO"], "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAG"], "FECHA_INGRESO": p["ING"], "DIAS_ESTANCIA": dias})
 
-                if datos_excel:
                     df_out = pd.DataFrame(datos_excel)
                     otros_servs = sorted([s for s in list(especialidades_finales) if s not in ORDEN_TERAPIAS_EXCEL])
                     mapeo_orden = ORDEN_TERAPIAS_EXCEL + otros_servs
@@ -174,18 +171,16 @@ if archivo:
 
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_out.to_excel(writer, index=False, sheet_name='Epidemiologia')
+                        df_out.to_excel(writer, index=False)
                     
-                    output.seek(0)
-                    wb = load_workbook(output)
-                    ws = wb.active
-                    ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
-                    for col in ws.columns:
-                        ws.column_dimensions[get_column_letter(col[0].column)].width = 25
-                    
-                    final_io = BytesIO()
-                    wb.save(final_io)
-                    st.success(f"✅ Reporte generado.")
-                    st.download_button(label="💾 DESCARGAR EXCEL", data=final_io.getvalue(), file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    st.download_button(label="💾 DESCARGAR EXCEL", data=output.getvalue(), file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+        # --- MÓDULO 2: CENSO DE INSUMOS ---
+        elif menu_opcion == "📦 Censo de Insumos":
+            st.subheader("Cálculo de Insumos Críticos")
+            st.info("Este apartado utilizará los datos del censo cargado para calcular materiales.")
+            st.write(f"Pacientes disponibles para cálculo: **{len(pacs_detectados)}**")
+            # Aquí empezaremos a programar la lógica de materiales
+
     except Exception as e:
         st.error(f"Error: {e}")
