@@ -6,7 +6,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, Border, Side, Font
 
 # --- REGLAS DE NEGOCIO ---
 ORDEN_TERAPIAS_EXCEL = ["UNIDAD CORONARIA", "UCIA", "TERAPIA POSQUIRURGICA", "U.C.I.N.", "U.T.I.P.", "UNIDAD DE QUEMADOS"]
@@ -37,10 +37,10 @@ def sync_group(cat_name, servicios):
     master_val = st.session_state[f"master_{cat_name}"]
     for s in servicios: st.session_state[f"serv_{cat_name}_{s}"] = master_val
 
-st.title("📋 Censo Epidemiológico")
+st.title("📋 Censo Epidemiológico Diario")
 
 if 'archivo_compartido' not in st.session_state:
-    st.info("👈 Por favor, sube el censo en la barra lateral.")
+    st.info("👈 Por favor, sube el archivo HTML en el apartado de 'Configuración' de la izquierda.")
 else:
     try:
         tablas = pd.read_html(st.session_state['archivo_compartido'])
@@ -63,10 +63,10 @@ else:
 
         st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
 
-        # Buckets
+        # Organización en Buckets
         buckets = {}
         asignadas = set()
-        terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
+        terapias_list = sorted([e for e in especialidades_encontradas if e in ORDEN_TERAPIAS_EXCEL])
         if terapias_list:
             buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
             asignadas.update(terapias_list)
@@ -117,19 +117,35 @@ else:
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_out.to_excel(writer, index=False, sheet_name='Epidemiologia')
+                    
                     output.seek(0)
-                    wb = load_workbook(output); ws = wb.active
+                    wb = load_workbook(output)
+                    ws = wb.active
+                    
+                    # Definición de bordes delgados
+                    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+
+                    # Formateo dinámico y bordes
                     for col in ws.columns:
                         max_length = 0
                         column_letter = get_column_letter(col[0].column)
                         for cell in col:
-                            if cell.value: max_length = max(max_length, len(str(cell.value)))
-                            cell.alignment = Alignment(wrap_text=True, vertical="center")
+                            cell.border = thin_border # Aplicar marcos a cada celda
+                            if cell.value:
+                                max_length = max(max_length, len(str(cell.value)))
+                            cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
                         ws.column_dimensions[column_letter].width = min(max_length + 2, 50)
+                    
+                    # Agregar Tabla Oficial
                     tab = Table(displayName="CensoTable", ref=ws.dimensions)
                     tab.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
                     ws.add_table(tab)
-                    final_io = BytesIO(); wb.save(final_io)
+                    
+                    final_io = BytesIO()
+                    wb.save(final_io)
+                    
+                    # Mensaje solicitado
+                    st.success("✅ Reporte de censo generado.") 
                     st.download_button(label="💾 DESCARGAR EXCEL", data=final_io.getvalue(), file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     except Exception as e:
         st.error(f"Error: {e}")
