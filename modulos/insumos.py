@@ -38,7 +38,6 @@ else:
         col0_str = df_completo.iloc[:, 0].fillna("").astype(str).str.upper()
         
         pacs_detectados = []
-        # LOGICA DE FILTRADO IGUAL A CENSO_DIARIO.PY
         IGNORAR = ["PACIENTES", "TOTAL", "SUBTOTAL", "PÁGINA", "IMPRESIÓN", "1111"]
         
         esp_actual_temp = "SIN_ESPECIALIDAD"
@@ -81,7 +80,6 @@ else:
                 f_venc = venc.strftime("%d/%m/%Y")
                 
                 output = BytesIO()
-                # Definición de bordes
                 thin_border = Border(
                     left=Side(style='thin'), right=Side(style='thin'), 
                     top=Side(style='thin'), bottom=Side(style='thin')
@@ -102,20 +100,19 @@ else:
                         df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                         ws = writer.sheets[sheet_name]
                         
-                        # --- ENCABEZADO SUPERIOR (FUSIONADO) ---
+                        # --- ENCABEZADO SUPERIOR ---
                         ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
                         cell_h = ws.cell(row=1, column=1, value=f"{serv} DEL {f_hoy} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)")
                         cell_h.alignment = Alignment(horizontal="center", vertical="center")
                         cell_h.font = Font(bold=True)
 
-                        # --- CUERPO DE TABLA: BORDES Y AUTOAJUSTE ---
+                        # --- CUERPO: BORDES Y AUTOAJUSTE ---
                         lr = ws.max_row
                         for row in ws.iter_rows(min_row=2, max_row=lr, min_col=1, max_col=8):
                             for cell in row:
                                 cell.border = thin_border
                                 cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
 
-                        # Ajuste de ancho de columnas
                         for i, col_name in enumerate(df_final.columns):
                             L = get_column_letter(i + 1)
                             max_len = len(col_name)
@@ -132,9 +129,10 @@ else:
                         cell_f.font = Font(size=9, italic=True)
                         ws.row_dimensions[lr + 1].height = 55 
                         
-                        # --- FIRMA: AUTORIZÓ (FUSIONADA Y CENTRADA) ---
-                        ws.merge_cells(start_row=lr + 3, start_column=1, end_row=lr + 3, end_column=8)
-                        cell_auth = ws.cell(row=lr + 3, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS")
+                        # --- FIRMA: AUTORIZÓ (JUSTO DEBAJO) ---
+                        # Usamos lr + 2 para eliminar la fila de espacio
+                        ws.merge_cells(start_row=lr + 2, start_column=1, end_row=lr + 2, end_column=8)
+                        cell_auth = ws.cell(row=lr + 2, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS")
                         cell_auth.alignment = Alignment(horizontal="center", vertical="center")
                         cell_auth.font = Font(bold=True)
 
