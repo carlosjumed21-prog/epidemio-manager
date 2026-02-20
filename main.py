@@ -1,14 +1,18 @@
 import streamlit as st
 
-# --- CONFIGURACIÓN GLOBAL (Solo se define aquí) ---
-st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
+# --- CONFIGURACIÓN GLOBAL ---
+st.set_page_config(
+    page_title="EpidemioManager - CMN 20 de Noviembre", 
+    page_icon="🏥",
+    layout="wide"
+)
 
-# --- NAVEGACIÓN ---
-# Aquí puedes ir agregando más páginas conforme crees más archivos en la carpeta modulos
+# --- NAVEGACIÓN EN BARRA LATERAL ---
+# Cada Page apunta a un archivo dentro de la carpeta 'modulos'
 pg = st.navigation([
     st.Page("modulos/censo_diario.py", title="Censo Epidemiológico", icon="📋"),
-    # Ejemplo: st.Page("modulos/tesis_iaas.py", title="Modelo IAAS", icon="🔬"),
+    st.Page("modulos/insumos.py", title="Censo de Insumos", icon="📦"),
 ])
 
-# Ejecutar la aplicación
+# Ejecución
 pg.run()
