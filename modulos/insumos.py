@@ -3,10 +3,11 @@ import pandas as pd
 import re
 from io import BytesIO
 from datetime import datetime, timedelta
-from openpyxl import Workbook
+from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
+# --- FILTRO OFICIAL DE 11 ESPECIALIDADES ---
 SERVICIOS_INSUMOS_FILTRO = [
     "HEMATOLOGIA", "HEMATOLOGIA PEDIATRICA", "ONCOLOGIA PEDIATRICA",
     "NEONATOLOGIA", "INFECTOLOGIA PEDIATRICA", "U.C.I.N.",
@@ -16,18 +17,20 @@ SERVICIOS_INSUMOS_FILTRO = [
 
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
+    esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
+    
     if c.startswith("55"): return "U.C.I.N."
     if c.startswith("45"): return "NEONATOLOGIA" 
     if c.startswith("56"): return "U.T.I.P."
     if c.startswith("85"): return "UNIDAD DE QUEMADOS"
     if c.startswith("73"): return "UCIA"
     if c.isdigit() and 7401 <= int(c) <= 7409: return "TERAPIA POSQUIRURGICA"
-    return esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
+    return esp_html_clean
 
 st.title("📦 Censo de Insumos")
 
 if 'archivo_compartido' not in st.session_state:
-    st.info("👈 Por favor, sube el censo en la barra lateral.")
+    st.info("👈 Por favor, sube el archivo HTML en el apartado de 'Configuración' de la izquierda.")
 else:
     try:
         tablas = pd.read_html(st.session_state['archivo_compartido'])
@@ -35,51 +38,106 @@ else:
         col0_str = df_completo.iloc[:, 0].fillna("").astype(str).str.upper()
         
         pacs_detectados = []
+        # LOGICA DE FILTRADO IGUAL A CENSO_DIARIO.PY
+        IGNORAR = ["PACIENTES", "TOTAL", "SUBTOTAL", "PÁGINA", "IMPRESIÓN", "1111"]
+        
         esp_actual_temp = "SIN_ESPECIALIDAD"
         for i, val in enumerate(col0_str):
-            if "ESPECIALIDAD:" in val: esp_actual_temp = val; continue
+            if "ESPECIALIDAD:" in val:
+                esp_actual_temp = val
+                continue
+            
             fila = [str(x).strip() for x in df_completo.iloc[i].values]
-            if len(fila) > 1 and len(fila[1]) >= 5 and any(char.isdigit() for char in fila[1]):
+            
+            # Omitir filas que contienen palabras prohibidas o la cama 1111
+            if any(x in fila[0] for x in IGNORAR): continue
+            
+            # Validar que sea una fila de paciente (Registro con al menos 5 dígitos)
+            if len(fila[1]) >= 5 and any(char.isdigit() for char in fila[1]):
                 esp_real = obtener_especialidad_real(fila[0], esp_actual_temp)
+                
                 if esp_real in SERVICIOS_INSUMOS_FILTRO:
-                    pacs_detectados.append({"CAMA": fila[0], "REG": fila[1], "PAC": fila[2], "SEXO": fila[3], "EDAD": "".join(re.findall(r'\d+', fila[4])), "ING": fila[9], "esp_real": esp_real})
+                    pacs_detectados.append({
+                        "CAMA": fila[0], "REG": fila[1], "PAC": fila[2], "SEXO": fila[3], 
+                        "EDAD": "".join(re.findall(r'\d+', fila[4])), "ING": fila[9], 
+                        "esp_real": esp_real
+                    })
 
         if not pacs_detectados:
-            st.warning("No hay pacientes para insumos.")
+            st.warning("No se encontraron pacientes para las 11 especialidades de insumos.")
         else:
             servicios_encontrados = sorted(list(set([p["esp_real"] for p in pacs_detectados])))
+            
             for serv in servicios_encontrados:
                 with st.expander(f"🔍 Vista Previa: {serv}"):
                     df_p = pd.DataFrame([p for p in pacs_detectados if p["esp_real"] == serv])
-                    df_p["TIPO DE PRECAUCIONES"] = df_p["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if "ONCOLOGIA" in x or "QUEMADOS" in x else "ESTÁNDAR")
-                    st.table(df_p[["CAMA", "REG", "PAC", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES"]])
+                    # PROTECTOR solo para Oncología y Quemados
+                    df_p["TIPO DE PRECAUCIONES"] = df_p["esp_real"].apply(
+                        lambda x: "ESTÁNDAR / PROTECTOR" if "ONCOLOGIA" in x or "QUEMADOS" in x else "ESTÁNDAR"
+                    )
+                    df_p["INSUMO"] = "JABÓN/SANITAS"
+                    st.table(df_p[["CAMA", "REG", "PAC", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES", "INSUMO"]])
 
             if st.button("🚀 GENERAR EXCEL DE INSUMOS", use_container_width=True, type="primary"):
-                hoy = datetime.now(); venc = hoy + timedelta(days=7)
+                hoy = datetime.now()
+                venc = hoy + timedelta(days=7)
+                f_hoy = hoy.strftime("%d/%m/%Y")
+                f_venc = venc.strftime("%d/%m/%Y")
+                
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as writer:
                     for serv in servicios_encontrados:
                         df_s = pd.DataFrame([p for p in pacs_detectados if p["esp_real"] == serv])
-                        df_s["TIPO DE PRECAUCIONES"] = df_s["esp_real"].apply(lambda x: "ESTÁNDAR / PROTECTOR" if "ONCOLOGIA" in x or "QUEMADOS" in x else "ESTÁNDAR")
+                        df_s["TIPO DE PRECAUCIONES"] = df_s["esp_real"].apply(
+                            lambda x: "ESTÁNDAR / PROTECTOR" if "ONCOLOGIA" in x or "QUEMADOS" in x else "ESTÁNDAR"
+                        )
                         df_s["INSUMO"] = "JABÓN/SANITAS"
-                        df_final = df_s[["CAMA", "REG", "PAC", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES", "INSUMO"]]
+                        
+                        df_final = df_s[["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]] if "REGISTRO" in df_s.columns else df_s[["CAMA", "REG", "PAC", "SEXO", "EDAD", "ING", "TIPO DE PRECAUCIONES", "INSUMO"]]
                         df_final.columns = ["CAMA", "REGISTRO", "PACIENTE", "SEXO", "EDAD", "FECHA DE INGRESO", "TIPO DE PRECAUCIONES", "INSUMO"]
                         
                         sheet_name = serv[:30].replace("/", "-")
                         df_final.to_excel(writer, index=False, sheet_name=sheet_name, startrow=1)
                         ws = writer.sheets[sheet_name]
-                        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
-                        cell_h = ws.cell(row=1, column=1, value=f"{serv} DEL {hoy.strftime('%d/%m/%Y')} AL {venc.strftime('%d/%m/%Y')}")
-                        cell_h.alignment = Alignment(horizontal="center"); cell_h.font = Font(bold=True)
                         
+                        # --- FORMATO DE ENCABEZADO ---
+                        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
+                        cell_h = ws.cell(row=1, column=1, value=f"{serv} DEL {f_hoy} AL {f_venc} (PARA LOS 3 TURNOS Y FINES DE SEMANA)")
+                        cell_h.alignment = Alignment(horizontal="center", vertical="center")
+                        cell_h.font = Font(bold=True)
+
+                        # --- AUTOAJUSTE DE CELDAS (ANCHO Y ALTO/WRAP) ---
                         lr = ws.max_row
+                        for col in ws.columns:
+                            max_length = 0
+                            column_letter = get_column_letter(col[0].column)
+                            for cell in col:
+                                if cell.row == 1: continue # Saltar encabezado fusionado para el cálculo de ancho
+                                try:
+                                    if cell.value:
+                                        val_len = len(str(cell.value))
+                                        if val_len > max_length: max_length = val_len
+                                    # Aplicar Wrap Text y alineación vertical para que se ajuste la altura
+                                    cell.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+                                except: pass
+                            ws.column_dimensions[column_letter].width = min(max_length + 4, 40)
+
+                        # --- PIE DE PÁGINA (LEYENDA COMPLETA NOM-045) ---
                         ws.merge_cells(start_row=lr + 1, start_column=1, end_row=lr + 1, end_column=8)
-                        ws.cell(row=lr + 1, column=1, value="Comentario NOM-045...").font = Font(size=9, italic=True)
+                        leyenda = "Comentario: de acuerdo con la Norma Oficial Mexicana NOM-045-SSA2-2005, Para la vigilancia epidemiológica, prevención y control de las infecciones nosocomiales. NINGUN RECIPIENTE QUE CONTENGA EL INSUMO DEVERÁ SER RELLENADO O REUTILIZADO."
+                        cell_f = ws.cell(row=lr + 1, column=1, value=leyenda)
+                        cell_f.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                        cell_f.font = Font(size=9, italic=True)
+                        ws.row_dimensions[lr + 1].height = 55 # Altura suficiente para la leyenda larga
+                        
                         ws.cell(row=lr + 3, column=1, value="AUTORIZÓ: DRA. BRENDA CASTILLO MATUS").font = Font(bold=True)
 
-                        for col in ws.columns:
-                            L = get_column_letter(col[0].column)
-                            ws.column_dimensions[L].width = 20
-                st.download_button(label="💾 DESCARGAR INSUMOS", data=output.getvalue(), file_name=f"Insumos_{hoy.strftime('%d%m%Y')}.xlsx", use_container_width=True)
+                st.success("✅ Reporte de insumos generado con éxito.")
+                st.download_button(
+                    label="💾 DESCARGAR REPORTE DE INSUMOS", 
+                    data=output.getvalue(), 
+                    file_name=f"Insumos_Epidemio_{hoy.strftime('%d%m%Y')}.xlsx",
+                    use_container_width=True
+                )
     except Exception as e:
         st.error(f"Error: {e}")
