@@ -30,43 +30,42 @@ VINCULO_AUTO_INCLUSION = {
 }
 
 COLORES_INTERFAZ = {
-    "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B",  # Rojo
-    "COORD_PEDIATRIA": "#5DADE2",           # Azul claro
-    "COORD_MEDICINA": "#1B4F72",            # Azul fuerte
-    "COORD_GINECOLOGIA": "#F06292",         # Rosa
-    "COORD_MODULARES": "#E67E22",           # Naranja
-    "OTRAS_ESPECIALIDADES": "#2C3E50",      # Gris fuerte
-    "COORD_CIRUGIA": "#117864"              # Verde
+    "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B", 
+    "COORD_PEDIATRIA": "#5DADE2",           
+    "COORD_MEDICINA": "#1B4F72",            
+    "COORD_GINECOLOGIA": "#F06292",         
+    "COORD_MODULARES": "#E67E22",           
+    "OTRAS_ESPECIALIDADES": "#2C3E50",      
+    "COORD_CIRUGIA": "#117864"              
 }
 
-# CATALOGO DEFINITIVO
+# --- CATALOGO REVISADO ---
 CATALOGO = {
+    "COORD_PEDIATRIA": [
+        "PEDIATRI", "PEDIATRICA", "NEONATO", "NEONATOLOGIA", 
+        "CUNERO", "UTIP", "U.T.I.P", "UCIN", "U.C.I.N",
+        "MEDICINA INTERNA PEDIATRICA"  # <--- FORZADO EN PEDIATRÍA
+    ],
+    "COORD_MODULARES": [
+        "ANGIOLOGIA", "VASCULAR", "CARDIOLOGIA", "CARDIOVASCULAR", 
+        "TORAX", "NEUMO", "HEMATO", "NEUROCIRUGIA", "NEUROLOGIA", # <--- FORZADO EN MODULARES
+        "ONCOLOGIA", "CORONARIA", "UNIDAD CORONARIA", "PSIQ", "PSIQUIATRIA"
+    ],
     "COORD_MEDICINA": [
-        "DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", 
-        "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", 
-        "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"
+        "DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "REUMA", "UCIA", 
+        "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", 
+        "TERAPIA POSQUIRURGICA", "POSQUIRURGICA", "MEDICINA INTERNA"
     ],
     "COORD_CIRUGIA": [
         "CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", 
         "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", 
         "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"
     ],
-    "COORD_MODULARES": [
-        "ANGIOLOGIA", "VASCULAR", "CARDIOLOGIA", "CARDIOVASCULAR", 
-        "TORAX", "NEUMO", "HEMATO", "NEUROCIRUGIA", "NEUROLOGIA", # <--- Confirmado en Modulares
-        "ONCOLOGIA", "CORONARIA", "UNIDAD CORONARIA", "PSIQ", "PSIQUIATRIA"
-    ],
-    "COORD_PEDIATRIA": [
-        "PEDIATRI", "PEDIATRICA", "NEONATO", "NEONATOLOGIA", 
-        "CUNERO", "UTIP", "U.T.I.P", "UCIN", "U.C.I.N",
-        "MEDICINA INTERNA PEDIATRICA" # <--- Confirmado en Pediatría
-    ],
     "COORD_GINECOLOGIA": [
         "GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"
     ]
 }
 
-# --- LÓGICA DE CLASIFICACIÓN ---
 def obtener_especialidad_real(cama, esp_html):
     c = str(cama).strip().upper()
     esp_html_clean = esp_html.replace("ESPECIALIDAD:", "").replace("&NBSP;", "").strip().upper()
@@ -116,34 +115,24 @@ if archivo:
                     "ING": fila[9], "esp_real": esp_real
                 })
 
-        st.subheader(f"📊 Pacientes Detectados: {len(pacs_detectados)}")
-
         # --- BUCKETS EXCLUYENTES ---
         buckets = {}
         asignadas = set()
 
-        # 1. Bucket Terapias
+        # 1. Terapias
         terapias_list = sorted([e for e in especialidades_encontradas if e in MAPA_TERAPIAS])
         if terapias_list:
             buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
             asignadas.update(terapias_list)
 
-        # 2. Bucket Pediatría (Captura M.I. Pediátrica antes que M.I. de adultos)
-        ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in CATALOGO["COORD_PEDIATRIA"])])
-        if ped_list:
-            buckets["COORD_PEDIATRIA"] = ped_list
-            asignadas.update(ped_list)
-
-        # 3. Resto de Coordinaciones
-        for cat in ["COORD_MEDICINA", "COORD_CIRUGIA", "COORD_MODULARES", "COORD_GINECOLOGIA"]:
-            if cat == "COORD_PEDIATRIA": continue
+        # 2. PROCESAMIENTO POR ORDEN DE CATALOGO (PEDIATRIA PRIMERO PARA EVITAR CONFLICTO CON M.I.)
+        for cat in ["COORD_PEDIATRIA", "COORD_MODULARES", "COORD_MEDICINA", "COORD_CIRUGIA", "COORD_GINECOLOGIA"]:
             kws = CATALOGO[cat]
             found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
             if found:
                 buckets[cat] = found
                 asignadas.update(found)
 
-        # 4. Otras
         otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
         if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
@@ -158,9 +147,6 @@ if archivo:
                     for s in servicios:
                         st.checkbox(s, key=f"serv_{cat_name}_{s}")
 
-        st.write("---")
-
-        # --- GENERAR EXCEL ---
         if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
             especialidades_finales = set()
             for c_name, servs in buckets.items():
@@ -186,8 +172,7 @@ if archivo:
 
                 if datos_excel:
                     df_out = pd.DataFrame(datos_excel)
-                    otros_servs = sorted([s for s in list(especialidades_finales) if s not in ORDEN_TERAPIAS_EXCEL])
-                    mapeo_orden = ORDEN_TERAPIAS_EXCEL + otros_servs
+                    mapeo_orden = ORDEN_TERAPIAS_EXCEL + sorted([s for s in especialidades_finales if s not in ORDEN_TERAPIAS_EXCEL])
                     df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden, ordered=True)
                     df_out = df_out.sort_values(['ESPECIALIDAD', 'CAMA'])
 
@@ -204,7 +189,6 @@ if archivo:
                     
                     final_io = BytesIO()
                     wb.save(final_io)
-                    st.success(f"✅ Reporte generado.")
                     st.download_button(label="💾 DESCARGAR EXCEL", data=final_io.getvalue(), file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     except Exception as e:
         st.error(f"Error: {e}")
