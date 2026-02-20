@@ -39,7 +39,7 @@ COLORES_INTERFAZ = {
     "COORD_CIRUGIA": "#117864"              # Verde
 }
 
-# CATALOGO AJUSTADO SEGÚN SOLICITUD
+# CATALOGO DEFINITIVO
 CATALOGO = {
     "COORD_MEDICINA": [
         "DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", 
@@ -53,13 +53,13 @@ CATALOGO = {
     ],
     "COORD_MODULARES": [
         "ANGIOLOGIA", "VASCULAR", "CARDIOLOGIA", "CARDIOVASCULAR", 
-        "TORAX", "NEUMO", "HEMATO", "NEUROCIRUGIA", "NEUROLOGIA", # <--- Regresó a Modulares
+        "TORAX", "NEUMO", "HEMATO", "NEUROCIRUGIA", "NEUROLOGIA", # <--- Confirmado en Modulares
         "ONCOLOGIA", "CORONARIA", "UNIDAD CORONARIA", "PSIQ", "PSIQUIATRIA"
     ],
     "COORD_PEDIATRIA": [
         "PEDIATRI", "PEDIATRICA", "NEONATO", "NEONATOLOGIA", 
         "CUNERO", "UTIP", "U.T.I.P", "UCIN", "U.C.I.N",
-        "MEDICINA INTERNA PEDIATRICA" # <--- Añadido a Pediatría
+        "MEDICINA INTERNA PEDIATRICA" # <--- Confirmado en Pediatría
     ],
     "COORD_GINECOLOGIA": [
         "GINECO", "OBSTETRICIA", "MATERNO", "REPRODUCCION", "BIOLOGIA DE LA REPRO"
@@ -128,7 +128,7 @@ if archivo:
             buckets["⚠️ UNIDADES DE TERAPIA ⚠️"] = terapias_list
             asignadas.update(terapias_list)
 
-        # 2. Bucket Pediatría (Prioridad para capturar Medicina Interna Pediatrica antes que M.I. de adultos)
+        # 2. Bucket Pediatría (Captura M.I. Pediátrica antes que M.I. de adultos)
         ped_list = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in CATALOGO["COORD_PEDIATRIA"])])
         if ped_list:
             buckets["COORD_PEDIATRIA"] = ped_list
