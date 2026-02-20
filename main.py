@@ -6,6 +6,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment
 
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="EpidemioManager - CMN 20 de Noviembre", layout="wide")
@@ -31,15 +32,15 @@ VINCULO_AUTO_INCLUSION = {
 
 COLORES_INTERFAZ = {
     "⚠️ UNIDADES DE TERAPIA ⚠️": "#C0392B",  # Rojo
-    "COORD_PEDIATRIA": "#5DADE2",           # Azul claro
-    "COORD_MEDICINA": "#1B4F72",            # Azul fuerte
-    "COORD_GINECOLOGIA": "#F06292",         # Rosa
-    "COORD_MODULARES": "#E67E22",           # Naranja
-    "OTRAS_ESPECIALIDADES": "#2C3E50",      # Gris fuerte
-    "COORD_CIRUGIA": "#117864"              # Verde
+    "COORD_PEDIATRIA": "#5DADE2",            # Azul claro
+    "COORD_MEDICINA": "#1B4F72",             # Azul fuerte
+    "COORD_GINECOLOGIA": "#F06292",          # Rosa
+    "COORD_MODULARES": "#E67E22",            # Naranja
+    "OTRAS_ESPECIALIDADES": "#2C3E50",       # Gris fuerte
+    "COORD_CIRUGIA": "#117864"               # Verde
 }
 
-# CATALOGO AJUSTADO: PSIQUIATRIA MOVIDA A MODULARES
+# CATALOGO AJUSTADO
 CATALOGO = {
     "COORD_MEDICINA": ["DERMATO", "ENDOCRINO", "GERIAT", "INMUNO", "MEDICINA INTERNA", "REUMA", "UCIA", "TERAPIA INTERMEDIA", "CLINICA DEL DOLOR", "TPQX", "TERAPIA POSQUIRURGICA", "POSQUIRURGICA"],
     "COORD_CIRUGIA": ["CIRUGIA GENERAL", "CIR. GENERAL", "MAXILO", "RECONSTRUCTIVA", "PLASTICA", "GASTRO", "NEFROLOGIA", "OFTALMO", "ORTOPEDIA", "OTORRINO", "UROLOGIA", "TRASPLANTES", "QUEMADOS", "UNIDAD DE QUEMADOS"],
@@ -116,7 +117,7 @@ if archivo:
             buckets["COORD_PEDIATRIA"] = ped_list
             asignadas.update(ped_list)
 
-        # 3. Resto de Coordinaciones (Incluye Psiquiatría en Modulares)
+        # 3. Resto de Coordinaciones
         for cat, kws in CATALOGO.items():
             if cat == "COORD_PEDIATRIA": continue
             found = sorted([e for e in especialidades_encontradas if e not in asignadas and any(kw in e for kw in kws)])
@@ -128,7 +129,7 @@ if archivo:
         otras = sorted([e for e in especialidades_encontradas if e not in asignadas])
         if otras: buckets["OTRAS_ESPECIALIDADES"] = otras
 
-        # --- RENDERIZADO ---
+        # --- RENDERIZADO INTERFAZ ---
         cols = st.columns(3)
         for idx, (cat_name, servicios) in enumerate(buckets.items()):
             with cols[idx % 3]:
@@ -141,7 +142,7 @@ if archivo:
 
         st.write("---")
 
-        # --- GENERAR EXCEL ---
+        # --- GENERAR EXCEL CON FORMATO DINÁMICO ---
         if st.button("🚀 GENERAR EXCEL", use_container_width=True, type="primary"):
             especialidades_finales = set()
             for c_name, servs in buckets.items():
@@ -163,7 +164,18 @@ if archivo:
                             f_ing = datetime.strptime(p["ING"], "%d/%m/%Y")
                             dias = (datetime(fecha_hoy.year, fecha_hoy.month, fecha_hoy.day) - datetime(f_ing.year, f_ing.month, f_ing.day)).days + 1
                         except: dias = "Rev."
-                        datos_excel.append({"FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"), "ESPECIALIDAD": p["esp_real"], "CAMA": p["CAMA"], "REGISTRO": p["REG"], "PACIENTE": p["PAC"], "SEXO": p["SEXO"], "EDAD": p["EDAD"], "DIAGNOSTICO": p["DIAG"], "FECHA_INGRESO": p["ING"], "DIAS_ESTANCIA": dias})
+                        datos_excel.append({
+                            "FECHA_REPORTE": fecha_hoy.strftime("%d/%m/%Y"), 
+                            "ESPECIALIDAD": p["esp_real"], 
+                            "CAMA": p["CAMA"], 
+                            "REGISTRO": p["REG"], 
+                            "PACIENTE": p["PAC"], 
+                            "SEXO": p["SEXO"], 
+                            "EDAD": p["EDAD"], 
+                            "DIAGNOSTICO": p["DIAG"], 
+                            "FECHA_INGRESO": p["ING"], 
+                            "DIAS_ESTANCIA": dias
+                        })
 
                 if datos_excel:
                     df_out = pd.DataFrame(datos_excel)
@@ -172,6 +184,7 @@ if archivo:
                     df_out['ESPECIALIDAD'] = pd.Categorical(df_out['ESPECIALIDAD'], categories=mapeo_orden, ordered=True)
                     df_out = df_out.sort_values(['ESPECIALIDAD', 'CAMA'])
 
+                    # Escritura inicial con pandas
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_out.to_excel(writer, index=False, sheet_name='Epidemiologia')
@@ -179,13 +192,45 @@ if archivo:
                     output.seek(0)
                     wb = load_workbook(output)
                     ws = wb.active
-                    ws.add_table(Table(displayName="CensoTable", ref=ws.dimensions, tableStyleInfo=TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)))
+                    
+                    # --- APLICAR FORMATO AVANZADO CON OPENPYXL ---
+                    # 1. Ajuste automático de columnas y Wrap Text
                     for col in ws.columns:
-                        ws.column_dimensions[get_column_letter(col[0].column)].width = 25
+                        max_length = 0
+                        column_letter = get_column_letter(col[0].column)
+                        
+                        for cell in col:
+                            try:
+                                # Medir longitud para el ancho
+                                if cell.value:
+                                    val_len = len(str(cell.value))
+                                    if val_len > max_length:
+                                        max_length = val_len
+                                
+                                # Activar ajuste de texto y centrado vertical
+                                cell.alignment = Alignment(wrap_text=True, vertical="center")
+                            except:
+                                pass
+                        
+                        # Ancho dinámico limitado a 50 para evitar columnas excesivas
+                        adjusted_width = min(max_length + 2, 50)
+                        ws.column_dimensions[column_letter].width = adjusted_width
+
+                    # 2. Agregar Tabla Oficial de Excel
+                    tab = Table(displayName="CensoTable", ref=ws.dimensions)
+                    style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+                    tab.tableStyleInfo = style
+                    ws.add_table(tab)
                     
                     final_io = BytesIO()
                     wb.save(final_io)
                     st.success(f"✅ Reporte generado.")
-                    st.download_button(label="💾 DESCARGAR EXCEL", data=final_io.getvalue(), file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    st.download_button(
+                        label="💾 DESCARGAR EXCEL", 
+                        data=final_io.getvalue(), 
+                        file_name=f"Censo_Epidemio_{fecha_hoy.strftime('%d%m%Y')}.xlsx", 
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                        use_container_width=True
+                    )
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error detectado: {e}")
