@@ -8,21 +8,27 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CARGADOR GLOBAL EN BARRA LATERAL ---
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/2/25/Logo_ISSSTE.svg", width=120)
-st.sidebar.title("⚙️ Configuración")
+# --- BARRA LATERAL (ORDEN SUPERIOR) ---
+st.sidebar.header("⚙️ Configuración")
 
-# Cargador único de archivo
-archivo_subido = st.sidebar.file_uploader("Subir Censo HTML", type=["html", "htm"])
+# 1. El cargador de archivos ahora es lo primero que aparece
+archivo_subido = st.sidebar.file_uploader(
+    "Subir Censo HTML", 
+    type=["html", "htm"],
+    help="Arrastra aquí el archivo generado por el sistema del hospital."
+)
 
-# Almacenar el archivo en el estado de la sesión
+# Guardar en memoria compartida
 if archivo_subido:
     st.session_state['archivo_compartido'] = archivo_subido
     st.sidebar.success("✅ Censo cargado")
 else:
-    st.sidebar.info("👋 Sube el censo aquí para usar las herramientas.")
+    st.sidebar.info("👋 Por favor, sube un censo.")
 
-# --- NAVEGACIÓN ---
+# 2. Línea divisoria para separar la carga de la navegación
+st.sidebar.divider()
+
+# 3. Definición de las Pestañas (Aparecerán debajo del cargador)
 pg = st.navigation([
     st.Page("modulos/censo_diario.py", title="Censo Epidemiológico", icon="📋"),
     st.Page("modulos/insumos.py", title="Censo de Insumos", icon="📦"),
