@@ -1,26 +1,28 @@
 import streamlit as st
 
-# 1. Configuración de página
+# --- CONFIGURACIÓN GLOBAL ---
 st.set_page_config(
-    page_title="EpidemioManager - CMN 20 de Noviembre",
+    page_title="EpidemioManager - CMN 20 de Noviembre", 
     page_icon="🏥",
     layout="wide",
-    initial_sidebar_state="expanded" # Esto obliga a que la barra lateral aparezca abierta
+    initial_sidebar_state="expanded"
 )
 
-# 2. Cargador de archivos en la barra lateral
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/2/25/Logo_ISSSTE.svg", width=150)
-st.sidebar.title("📁 Carga de Censo")
-archivo = st.sidebar.file_uploader("Sube el HTML del censo aquí", type=["html", "htm"])
+# --- CARGADOR GLOBAL EN BARRA LATERAL ---
+st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/2/25/Logo_ISSSTE.svg", width=120)
+st.sidebar.title("⚙️ Configuración")
 
-# Guardar en el estado de la sesión para que los módulos lo usen
-if archivo:
-    st.session_state['archivo_compartido'] = archivo
-    st.sidebar.success("✅ Archivo cargado correctamente")
+# Cargador único de archivo
+archivo_subido = st.sidebar.file_uploader("Subir Censo HTML", type=["html", "htm"])
+
+# Almacenar el archivo en el estado de la sesión
+if archivo_subido:
+    st.session_state['archivo_compartido'] = archivo_subido
+    st.sidebar.success("✅ Censo cargado")
 else:
-    st.sidebar.warning("⚠️ Esperando archivo HTML...")
+    st.sidebar.info("👋 Sube el censo aquí para usar las herramientas.")
 
-# 3. Definición de la Navegación
+# --- NAVEGACIÓN ---
 pg = st.navigation([
     st.Page("modulos/censo_diario.py", title="Censo Epidemiológico", icon="📋"),
     st.Page("modulos/insumos.py", title="Censo de Insumos", icon="📦"),
